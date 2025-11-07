@@ -1,14 +1,4 @@
 {
-  "researchers": [
-    {
-      "handle": "0xSorryNotSorry"
-    },
-    {
-      "handle": "stanchev500"
-    },
-    {
-      "handle": "christianvari"
-    }
-  ],
-  "lsr": "christianvari"
+  "researchers": [],
+  "lsr": null
 }
