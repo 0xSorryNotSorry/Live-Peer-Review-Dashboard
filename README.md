@@ -30,7 +30,7 @@ Open `http://localhost:3000` in your browser. The page will load even without a 
 From the dashboard you can:
 - Link a PR by pasting its URL or entering owner/repo/PR# and clicking **Sync**
 - Manage the researcher allowlist and designate a lead researcher
-- Detect duplicate findings by using `DUP <comment-link>` markers in GitHub review comments
+- Detect duplicate findings by using ``` DUP `<comment-link>` ```markers in GitHub review comments
 - Assign findings and add ad-hoc columns; assignments and custom columns persist locally per PR
 - Generate a PDF snapshot of the current table with **Generate PDF**
 
