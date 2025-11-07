@@ -24,6 +24,9 @@ This script generates **PDF** reports of pull request review comments and their 
 - Generates reports in **PDF** format.
 - **Highlights comments** based on the number of positive or negative reactions.
 - Provides **hyperlinks** to the original comments on GitHub for easy reference.
+- **Detects and tracks duplicate findings** using DUP markers in comments.
+- **Assigns duplicates evenly** across auditors for reporting.
+- **Groups duplicate findings** with their originals for easy review.
 
 ## Prerequisites
 
@@ -130,6 +133,40 @@ node main.js [--config-path=path/to/config.json]
   node main.js --config-path=./myconfig.json
   ```
 
+## Duplicate Detection
+
+During the peer review phase, auditors can mark findings as duplicates using a consistent marker format in their GitHub comments:
+
+### Marking Duplicates
+
+To mark a finding as a duplicate, include the following marker in your comment:
+
+```
+DUP <link_to_original_finding>
+```
+
+**Supported formats:**
+- `DUP https://github.com/owner/repo/pull/123#discussion_r1234567890`
+- `DUP: https://github.com/owner/repo/pull/123#discussion_r1234567890`
+- `DUP <https://github.com/owner/repo/pull/123#discussion_r1234567890>`
+
+### How It Works
+
+1. **Detection**: The tool automatically parses all review comments for DUP markers
+2. **Grouping**: Duplicates are grouped with their original findings
+3. **Assignment**: Each duplicate is assigned to its proposer for reporting
+4. **Statistics**: Duplicate findings are excluded from the main issue statistics to avoid double-counting
+
+### Example Workflow
+
+1. Auditor A posts a finding about reentrancy in function X
+2. Auditor B finds the same issue and comments: `DUP https://github.com/owner/repo/pull/42#discussion_r987654321` (linking to Auditor A's comment)
+3. The tool will:
+   - Group both findings together
+   - Show Auditor A as the original proposer
+   - Assign the duplicate to Auditor B for their report
+   - Display the relationship in the PDF report
+
 ## Output
 
 The script will generate a PDF file named `{name}.pdf` based on the `name` specified in your `config.json`.
@@ -139,13 +176,38 @@ The script will generate a PDF file named `{name}.pdf` based on the `name` speci
 - **Structure:**
 
   - The report includes a section for each repository and pull request.
-  - Tables display comments, reported status, and reactions.
+  - **Issues Summary**: Shows counts of reported, non-reported, and pending findings (excluding duplicates)
+  - **Reaction Completion Stats**: Displays how many comments each reviewer has reacted to
+  - **Duplicate Findings**: Groups all duplicates with their originals, showing proposers and counts
+  - **Duplicate Assignments**: Shows which duplicates are assigned to each auditor for reporting
+  - **All Comments Table**: Complete list with comments, reported status, duplicate markers, and reactions
   - Comments include hyperlinks to the original GitHub comments.
 
 - **Styling:**
 
   - Positive feedback rows are highlighted in **green**.
   - Negative feedback rows are highlighted in **red**.
+  - Duplicate markers link to the original finding.
+
+## Workflow Integration
+
+This tool is designed to integrate seamlessly into the Oak Security audit process:
+
+1. **During Peer Review Phase**: 
+   - Auditors review each other's findings in the GitHub PR
+   - When a duplicate is identified, mark it with `DUP <link_to_original>`
+   - React with 👍 (agree) or 👎 (disagree) to findings
+   - React with 🚀 on resolved threads that should be reported
+
+2. **After Peer Review**:
+   - Run this tool to generate the PDF report
+   - Review the duplicate groups to ensure correct identification
+   - Check duplicate assignments to see which auditor reports which duplicate
+   - Verify reaction completion stats to ensure all findings were reviewed
+
+3. **Finalizing Reports**:
+   - Each auditor reports their assigned findings (including assigned duplicates)
+   - The lead uses the report to track coverage and ensure nothing is missed
 
 ## Contributing
 
