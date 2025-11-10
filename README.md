@@ -47,6 +47,8 @@ From the dashboard you can:
 - A resolved thread that carries a `🚀` reaction renders as `✅` in the **Reported** column; resolved threads without the rocket appear as “not reported yet.”
 - Duplicate groups rely on the `DUP <link>` marker in the comment body. Auto-flagged duplicates can be removed from the table with the **Undupe** button (the flag resets when the server restarts).
 - Rows turn green when `👍` coverage reaches at least two thirds of reviewers, and red when `👎` reaches two thirds of the group (excluding the proposer).
+- Reaction coverage only considers handles currently in the researcher allowlist; add everyone you want counted via **Manage Researchers** or clear the filter to include all commenters.
+- If neither threshold is met the background stays neutral, so color always reflects consensus—green for broad agreement, red for broad rejection, and default for mixed or low-signal feedback.
 
 ### CLI PDF export (optional)
 
