@@ -37,7 +37,7 @@ From the dashboard you can:
 
 - Link a PR by pasting its URL or entering owner/repo/PR# and clicking **Sync**
 - Manage the researcher allowlist and designate a lead researcher
-- Mark duplicate findings by adding a comment reply in the GitHub review thread with the format: `DUP <full-comment-url>` or `DUP #discussion_r123456`
+- Mark duplicate findings by adding a comment reply in the GitHub review thread with the format: `DUP <full-comment-url>` 
 - Assign findings and add ad-hoc columns; assignments and custom columns persist locally per PR
 - Generate a PDF snapshot of the current table with **Generate PDF**
 
@@ -46,12 +46,11 @@ From the dashboard you can:
 To mark a finding as a duplicate, **add a reply comment** in the GitHub review thread (not the original issue body) with one of these formats:
 
 - `DUP <https://github.com/owner/repo/pull/123#discussion_r456789>`
-- `DUP #discussion_r456789`
 - `dup of <https://github.com/owner/repo/pull/123#discussion_r456789>`
 
 **Important:**
 - The DUP marker must be in a **reply comment** within the thread, not the original issue body
-- Use proper spacing: `DUP <url>` or `DUP #discussion_r123456`
+- Use proper spacing: `DUP <url>` 
 - The app scans all comments in each thread and uses the **last** DUP marker found
 - Transitive duplicates are automatically grouped: if A→B and C→B, then A, B, and C all appear in the same duplicate group
 - To remove a duplicate relationship, edit the GitHub comment to delete the DUP marker, then refresh the dashboard
