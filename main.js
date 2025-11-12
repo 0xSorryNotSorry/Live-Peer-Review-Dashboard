@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import { generatePDF } from "./dataFetcher.js";
+import { join } from "path";
 
 // Load configuration from a specified path or default to "config.json"
 async function loadConfig(configPath = "./config.json") {
@@ -28,7 +29,8 @@ async function main(configPath) {
 
 // Parse command-line arguments
 const args = process.argv.slice(2);
-let configPath = "./config.json";
+let configPath =
+    process.env.CONFIG_FILE || join(process.env.CONFIG_DIR || ".", "config.json");
 
 args.forEach((arg) => {
     if (arg.startsWith("--config-path=")) {
