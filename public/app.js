@@ -137,7 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     loadCurrentConfig();
     loadData();
-    startAutoRefresh();
+    // Don't start auto-refresh by default (manual mode is selected)
 });
 
 function setupEventListeners() {

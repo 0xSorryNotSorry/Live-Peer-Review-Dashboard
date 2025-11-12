@@ -119,6 +119,15 @@ app.get('/api/data', async (req, res) => {
         });
     } catch (error) {
         console.error('Error fetching data:', error);
+        
+        // Check if it's a rate limit error
+        if (error.message && error.message.includes('rate limit')) {
+            return res.status(429).json({ 
+                error: 'GitHub API rate limit exceeded. Please wait and try again later.',
+                isRateLimit: true
+            });
+        }
+        
         res.status(500).json({ error: error.message });
     }
 });

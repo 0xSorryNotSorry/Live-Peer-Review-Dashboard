@@ -45,13 +45,36 @@ function truncateText(text, charLimit = 300) {
 }
 
 // Helper function to extract DUP marker from comment body
-// Matches patterns like: Dup `<url>` or DUP <url>
-function extractDuplicateMarker(commentBody) {
-    // Match "DUP" or "Dup" followed by a GitHub URL in angle brackets (with optional backticks)
+// Matches patterns like: Dup `<url>`, DUP <url>, or GitHub's anchor format
+function extractDuplicateMarker(commentBody, owner, repo, prNumber) {
+    // Pattern 1: Full URL in angle brackets (with optional backticks)
     // Format: Dup `<https://github.com/...>` or Dup <https://github.com/...>
-    const dupRegex = /(?:DUP|Dup)\s+`?<(https:\/\/github\.com\/[^>]+)>`?/i;
-    const match = commentBody.match(dupRegex);
-    return match ? match[1] : null;
+    const fullUrlRegex = /(?:DUP|Dup)\s+(?:of\s+)?`?<?(https:\/\/github\.com\/[^>\s]+)>?`?/i;
+    const fullMatch = commentBody.match(fullUrlRegex);
+    if (fullMatch) {
+        return fullMatch[1];
+    }
+    
+    // Pattern 2: GitHub anchor format - #discussion_r123456
+    const anchorRegex = /(?:DUP|Dup)\s+(?:of\s+)?#discussion_r(\d+)/i;
+    const anchorMatch = commentBody.match(anchorRegex);
+    if (anchorMatch) {
+        const discussionId = anchorMatch[1];
+        return `https://github.com/${owner}/${repo}/pull/${prNumber}#discussion_r${discussionId}`;
+    }
+    
+    // Pattern 3: Issue comment format - #1 (comment) or similar
+    const issueCommentRegex = /(?:DUP|Dup)\s+(?:of\s+)?#(\d+)\s*\(comment\)/i;
+    const issueMatch = commentBody.match(issueCommentRegex);
+    if (issueMatch) {
+        // This is trickier - GitHub converts PR review comments to this format
+        // We'll need to handle this case, but it's ambiguous without the discussion_r ID
+        // For now, log a warning and skip
+        console.warn(`Found ambiguous DUP marker format: #${issueMatch[1]} (comment) - cannot resolve to specific comment`);
+        return null;
+    }
+    
+    return null;
 }
 
 // Helper function to extract comment ID from GitHub URL
@@ -82,7 +105,7 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
             reviewThreads(first: 100) {
               nodes {
                 isResolved
-                comments(first: 1) {
+                comments(first: 10) {
                   nodes {
                     id
                     body
@@ -117,100 +140,114 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
 
         for (const thread of reviewThreads) {
             const isResolved = thread.isResolved;
+            const threadComments = thread.comments.nodes;
+            
+            if (threadComments.length === 0) continue;
+            
+            // Only process the FIRST comment for display
+            const firstComment = threadComments[0];
+            const {
+                id: commentId,
+                body: commentText,
+                url: commentUrl,
+                author: commenter,
+            } = firstComment;
 
-            for (const comment of thread.comments.nodes) {
-                const {
-                    id: commentId,
-                    body: commentText,
-                    url: commentUrl,
-                    author: commenter,
-                } = comment;
+            const truncatedText = truncateText(commentText);
 
-                const truncatedText = truncateText(commentText);
-
-                if (!commenters.includes(commenter.login)) {
-                    commenters.push(commenter.login);
-                }
-
-                const duplicateOriginalUrl = extractDuplicateMarker(commentText);
-                const isDuplicate = duplicateOriginalUrl !== null;
-
-                const row = {
-                    Comment: { text: truncatedText, hyperlink: commentUrl },
-                    proposer: commenter.login,
-                    isDuplicate: isDuplicate,
-                    duplicateOf: duplicateOriginalUrl,
-                    commentUrl: commentUrl,
-                };
-
-                const reactions = comment.reactions.nodes;
-
-                row.thumbsUpCount = 0;
-                row.thumbsDownCount = 0;
-                row[commenter.login] = "Proposer";
-                row.reactions = {};
-
-                let hasRocket = false;
-
-                reactions.forEach((reaction) => {
-                    const user = reaction.user.login;
-                    if (!commenters.includes(user)) {
-                        commenters.push(user);
-                    }
-                    const emoji = getEmoji(reaction.content);
-
-                    switch (emoji) {
-                        case "🚀":
-                            hasRocket = true;
-                            break;
-                        case "👍":
-                            row[user] = emoji;
-                            row.thumbsUpCount += 1;
-                            row.reactions[user] = true;
-                            break;
-                        case "👎":
-                            row[user] = emoji;
-                            row.thumbsDownCount += 1;
-                            row.reactions[user] = true;
-                            break;
-                        case "👀":
-                            break;
-                        default:
-                            console.warn("Incorrect emoji", emoji, user, commentUrl);
-                    }
-                });
-
-                if (isResolved) {
-                    row.Reported = hasRocket ? "✅" : "❌";
-                    if (!isDuplicate) {
-                        if (hasRocket) {
-                            stats.reported++;
-                        } else {
-                            stats.nonReported++;
-                        }
-                    }
-                } else {
-                    if (!isDuplicate) {
-                        stats.pending++;
-                    }
-                }
-
-                if (isDuplicate) {
-                    duplicateMap.set(commentUrl, duplicateOriginalUrl);
-                    
-                    if (!originalToDuplicates.has(duplicateOriginalUrl)) {
-                        originalToDuplicates.set(duplicateOriginalUrl, []);
-                    }
-                    originalToDuplicates.get(duplicateOriginalUrl).push({
-                        url: commentUrl,
-                        proposer: commenter.login,
-                        isManual: true, // This is a manually marked duplicate
-                    });
-                }
-
-                rows.push(row);
-                comments.push(row);
+            if (!commenters.includes(commenter.login)) {
+                commenters.push(commenter.login);
             }
+
+            // Scan ALL comments in the thread for DUP markers (last one wins)
+            let duplicateOriginalUrl = null;
+            for (const comment of threadComments) {
+                const foundDup = extractDuplicateMarker(comment.body, owner, repo, pullRequestNumber);
+                if (foundDup) {
+                    duplicateOriginalUrl = foundDup; // Last marker wins
+                    console.log(`🔍 Found DUP marker in thread ${commentUrl}:`);
+                    console.log(`   Comment body: ${comment.body.substring(0, 100)}...`);
+                    console.log(`   Points to: ${foundDup}`);
+                }
+            }
+            
+            const isDuplicate = duplicateOriginalUrl !== null;
+
+            const row = {
+                Comment: { text: truncatedText, hyperlink: commentUrl },
+                proposer: commenter.login,
+                isDuplicate: isDuplicate,
+                duplicateOf: duplicateOriginalUrl,
+                commentUrl: commentUrl,
+            };
+
+            const reactions = firstComment.reactions.nodes;
+
+            row.thumbsUpCount = 0;
+            row.thumbsDownCount = 0;
+            row[commenter.login] = "Proposer";
+            row.reactions = {};
+
+            let hasRocket = false;
+
+            reactions.forEach((reaction) => {
+                const user = reaction.user.login;
+                if (!commenters.includes(user)) {
+                    commenters.push(user);
+                }
+                const emoji = getEmoji(reaction.content);
+
+                switch (emoji) {
+                    case "🚀":
+                        hasRocket = true;
+                        break;
+                    case "👍":
+                        row[user] = emoji;
+                        row.thumbsUpCount += 1;
+                        row.reactions[user] = true;
+                        break;
+                    case "👎":
+                        row[user] = emoji;
+                        row.thumbsDownCount += 1;
+                        row.reactions[user] = true;
+                        break;
+                    case "👀":
+                        break;
+                    default:
+                        console.warn("Incorrect emoji", emoji, user, commentUrl);
+                }
+            });
+
+            if (isResolved) {
+                row.Reported = hasRocket ? "✅" : "❌";
+                if (!isDuplicate) {
+                    if (hasRocket) {
+                        stats.reported++;
+                    } else {
+                        stats.nonReported++;
+                    }
+                }
+            } else {
+                if (!isDuplicate) {
+                    stats.pending++;
+                }
+            }
+
+            if (isDuplicate) {
+                duplicateMap.set(commentUrl, duplicateOriginalUrl);
+                
+                if (!originalToDuplicates.has(duplicateOriginalUrl)) {
+                    originalToDuplicates.set(duplicateOriginalUrl, []);
+                }
+                originalToDuplicates.get(duplicateOriginalUrl).push({
+                    url: commentUrl,
+                    proposer: commenter.login,
+                    isManual: true, // This is a manually marked duplicate
+                });
+            }
+
+            rows.push(row);
+            comments.push(row);
         }
     } catch (error) {
         console.error(
@@ -249,65 +286,88 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
         };
     });
 
-    // BIDIRECTIONAL DUPLICATE DETECTION
-    // Create unified groups where all members are duplicates of each other
-    const duplicateGroupsMap = new Map(); // Maps any URL in group to group ID
+    // Build connected components for duplicate groups
+    // If A→B and C→B, then A, B, C should all be in the same group
+    const urlToGroupId = new Map();
     let nextGroupId = 0;
     
-    for (const [dupUrl, originalUrl] of duplicateMap.entries()) {
-        const reverseKey = `${originalUrl}->${dupUrl}`;
-        
-        // Skip if manually unduped
-        if (undupeFlags[reverseKey]) continue;
-        
-        // Check if either URL is already in a group
-        let groupId = duplicateGroupsMap.get(dupUrl) || duplicateGroupsMap.get(originalUrl);
-        
-        if (!groupId) {
-            // Create new group
-            groupId = `group-${nextGroupId++}`;
+    // Helper function to get or create group ID for a URL
+    function getGroupId(url) {
+        if (urlToGroupId.has(url)) {
+            return urlToGroupId.get(url);
         }
+        const groupId = `group-${nextGroupId++}`;
+        urlToGroupId.set(url, groupId);
+        return groupId;
+    }
+    
+    // Helper function to merge two groups
+    function mergeGroups(url1, url2) {
+        const group1 = urlToGroupId.get(url1);
+        const group2 = urlToGroupId.get(url2);
         
-        // Add both URLs to the same group
-        duplicateGroupsMap.set(dupUrl, groupId);
-        duplicateGroupsMap.set(originalUrl, groupId);
-        
-        // Mark both as duplicates
-        const dupRow = rows.find(r => r.commentUrl === dupUrl);
-        const originalRow = rows.find(r => r.commentUrl === originalUrl);
-        
-        if (dupRow) {
-            dupRow.isDuplicate = true;
-            dupRow.duplicateGroupId = groupId;
-        }
-        if (originalRow) {
-            originalRow.isDuplicate = true;
-            originalRow.duplicateGroupId = groupId;
-            originalRow.isAutoDuplicate = !duplicateMap.has(originalUrl); // Auto if not manually marked
+        if (!group1 && !group2) {
+            // Neither has a group, create new one
+            const newGroupId = getGroupId(url1);
+            urlToGroupId.set(url2, newGroupId);
+        } else if (group1 && !group2) {
+            // url1 has group, add url2 to it
+            urlToGroupId.set(url2, group1);
+        } else if (!group1 && group2) {
+            // url2 has group, add url1 to it
+            urlToGroupId.set(url1, group2);
+        } else if (group1 !== group2) {
+            // Both have different groups, merge them
+            const keepGroup = group1;
+            const mergeGroup = group2;
+            // Update all URLs in mergeGroup to keepGroup
+            for (const [url, groupId] of urlToGroupId.entries()) {
+                if (groupId === mergeGroup) {
+                    urlToGroupId.set(url, keepGroup);
+                }
+            }
         }
     }
     
-    // Build unified duplicate groups
-    const unifiedGroups = new Map();
+    // Process all duplicate relationships and merge into groups
+    for (const [dupUrl, originalUrl] of duplicateMap.entries()) {
+        mergeGroups(dupUrl, originalUrl);
+    }
+    
+    // Mark all URLs in groups as duplicates
     for (const row of rows) {
-        if (row.isDuplicate && row.duplicateGroupId) {
-            if (!unifiedGroups.has(row.duplicateGroupId)) {
-                unifiedGroups.set(row.duplicateGroupId, []);
-            }
-            unifiedGroups.get(row.duplicateGroupId).push({
-                url: row.commentUrl,
+        if (urlToGroupId.has(row.commentUrl)) {
+            row.isDuplicate = true;
+            row.duplicateGroupId = urlToGroupId.get(row.commentUrl);
+            // Mark as auto-duplicate if it wasn't explicitly marked
+            row.isAutoDuplicate = !duplicateMap.has(row.commentUrl);
+        }
+    }
+    
+    // Rebuild originalToDuplicates based on unified groups
+    originalToDuplicates.clear();
+    const groupMembers = new Map();
+    
+    for (const [url, groupId] of urlToGroupId.entries()) {
+        if (!groupMembers.has(groupId)) {
+            groupMembers.set(groupId, []);
+        }
+        const row = rows.find(r => r.commentUrl === url);
+        if (row) {
+            groupMembers.get(groupId).push({
+                url: url,
                 proposer: row.proposer,
                 isManual: !row.isAutoDuplicate
             });
         }
     }
     
-    // Clear old structure and rebuild with unified groups
-    originalToDuplicates.clear();
-    for (const [groupId, members] of unifiedGroups.entries()) {
-        // Use first member as "original" for the group
-        const firstMember = members[0];
-        originalToDuplicates.set(firstMember.url, members.slice(1));
+    // Use first member of each group as "original"
+    for (const [groupId, members] of groupMembers.entries()) {
+        if (members.length > 0) {
+            const firstMember = members[0];
+            originalToDuplicates.set(firstMember.url, members.slice(1));
+        }
     }
 
     // First pass: assign regular issue numbers
