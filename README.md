@@ -1,6 +1,6 @@
-# Audit Review Manager
+# Live Peer Review Dashboard
 
-Single-page dashboard that ingests GitHub pull-request review comments and turns them into an actionable audit triage workspace. It highlights reactions, groups duplicate findings, lets you track assignments, and exports the current state to PDF.
+Single-page dashboard that ingests GitHub pull request review comments and turns them into an actionable audit triage workspace. It highlights reactions, groups duplicate findings, lets you track assignments, and exports the current state to PDF.
 
 > Built on top of and inspired by the open-source `audit-review-manager` project by christianvari. 🫶[^1]
 
