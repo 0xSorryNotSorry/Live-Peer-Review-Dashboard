@@ -210,6 +210,54 @@ select {
     font-weight: 600;
 }
 
+/* Progress Pie Charts */
+.progress-charts {
+    display: flex;
+    justify-content: center;
+    gap: 60px;
+    margin-bottom: 40px;
+    padding: 30px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.chart-container {
+    text-align: center;
+}
+
+.chart-container h3 {
+    margin-bottom: 15px;
+    color: #2c3e50;
+    font-size: 1.2em;
+}
+
+.pie-chart {
+    width: 200px;
+    height: 200px;
+    margin: 0 auto;
+}
+
+.pie-bg {
+    stroke: #e0e0e0;
+}
+
+.pie-progress {
+    transition: stroke-dasharray 0.5s ease;
+}
+
+.pie-text {
+    font-size: 32px;
+    font-weight: bold;
+    fill: #2c3e50;
+}
+
+.chart-label {
+    margin-top: 10px;
+    font-size: 14px;
+    color: #666;
+}
+
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -634,5 +682,114 @@ body.dark-mode .green-row {
 
 body.dark-mode .red-row {
     background: rgba(255, 0, 0, 0.15) !important;
+}
+
+body.dark-mode .duplicate-group-header {
+    background-color: rgba(0, 255, 106, 0.15) !important;
+}
+
+body.dark-mode .duplicate-group-header:hover {
+    background-color: rgba(0, 255, 106, 0.25) !important;
+}
+
+body.dark-mode .duplicate-group-header td {
+    border-left-color: #7CFC00 !important;
+}
+
+body.dark-mode .collapse-icon {
+    color: #7CFC00;
+}
+
+body.dark-mode .collapse-icon:hover {
+    color: #adff2f;
+}
+
+body.dark-mode .progress-charts {
+    background: #1f2937;
+}
+
+body.dark-mode .chart-container h3 {
+    color: #e5e7eb;
+}
+
+body.dark-mode .pie-bg {
+    stroke: #374151;
+}
+
+body.dark-mode .pie-text {
+    fill: #e5e7eb;
+}
+
+body.dark-mode .chart-label {
+    color: #9ca3af;
+}
+
+body.dark-mode #reviewProgress {
+    stroke: #00ff6a;
+}
+
+body.dark-mode #reportProgress {
+    stroke: #7CFC00;
+}
+
+/* Collapsible duplicate groups */
+.duplicate-group-header {
+    user-select: none;
+}
+
+.duplicate-group-header:hover {
+    background-color: #d1ecf1 !important;
+}
+
+.duplicate-group-header td {
+    border-left: 4px solid #007bff !important;
+}
+
+.collapse-icon {
+    display: inline-block;
+    color: #007bff;
+    font-weight: bold;
+    transition: transform 0.2s;
+    cursor: pointer;
+    vertical-align: middle;
+}
+
+.collapse-icon:hover {
+    color: #0056b3;
+    transform: scale(1.2);
+}
+
+.duplicate-group-row {
+    transition: opacity 0.2s;
+}
+
+/* Collapsed group separator */
+.collapsed-group-last {
+    border-bottom: 3px solid #007bff !important;
+}
+
+body.dark-mode .collapsed-group-last {
+    border-bottom-color: #7CFC00 !important;
+}
+
+/* Print styles - ensure all duplicate groups are expanded */
+@media print {
+    .duplicate-group-row {
+        display: table-row !important;
+    }
+    
+    .duplicate-group-header {
+        background-color: #e8f4f8 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    
+    .collapse-icon {
+        display: none;
+    }
+    
+    .collapsed-group-last {
+        border-bottom: 1px solid #ddd !important;
+    }
 }
 

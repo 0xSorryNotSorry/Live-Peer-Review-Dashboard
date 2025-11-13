@@ -411,6 +411,7 @@ function renderData(data) {
     latestCommenters = data.commenters || [];
     renderRepoInfo(data.repository);
     renderResearchersSection(data.researchersConfig, data.commenters);
+    renderProgressCharts(latestRows, data.duplicateGroups, latestCommenters);
     renderStats(data.stats, data.duplicateGroups);
     renderReactionStats(data.reactionStats, data.commenters);
     renderDuplicateGroups(data.duplicateGroups);
@@ -428,6 +429,104 @@ function renderRepoInfo(repo) {
         <p><strong>${repo.owner}/${repo.repo}</strong> - Pull Request #${repo.pullRequestNumber}</p>
     `;
     document.getElementById('repoInfo').innerHTML = html;
+}
+
+function renderProgressCharts(rows, duplicateGroups, commenters) {
+    // Build a map of duplicate groups for quick lookup
+    const duplicateGroupMap = new Map();
+    duplicateGroups.forEach(group => {
+        group.duplicates.forEach(dup => {
+            duplicateGroupMap.set(dup.url, group.groupNumber);
+        });
+    });
+    
+    // Identify unique issues (solo + duplicate groups)
+    const uniqueIssues = new Map(); // key: groupNumber or url, value: { rows: [], isGroup: bool }
+    
+    rows.forEach(row => {
+        if (row.isDuplicate && row.groupNumber) {
+            // Part of a duplicate group
+            if (!uniqueIssues.has(row.groupNumber)) {
+                uniqueIssues.set(row.groupNumber, { rows: [], isGroup: true });
+            }
+            uniqueIssues.get(row.groupNumber).rows.push(row);
+        } else if (!row.isDuplicate) {
+            // Solo issue
+            uniqueIssues.set(row.commentUrl || row.Comment?.hyperlink, { rows: [row], isGroup: false });
+        }
+    });
+    
+    const totalIssues = uniqueIssues.size;
+    let reviewedCount = 0;
+    let reportedCount = 0;
+    
+    // Calculate review and report progress
+    uniqueIssues.forEach((issue, key) => {
+        const issueRows = issue.rows;
+        
+        // Check if ANY row in this issue/group has been reviewed (green OR red)
+        // Green = majority thumbs up, Red = majority thumbs down
+        // Both count as "reviewed" since the team has made a decision
+        const hasReviewed = issueRows.some(row => {
+            const totalCommenters = commenters.length;
+            const thumbsUpCount = row.thumbsUpCount || 0;
+            const thumbsDownCount = row.thumbsDownCount || 0;
+            
+            // Green row: thumbsUpCount + 1 >= (2/3) * totalCommenters
+            const isGreen = (thumbsUpCount + 1) >= Math.ceil((2 / 3) * totalCommenters);
+            
+            // Red row: thumbsDownCount >= (2/3) * (totalCommenters - 1)
+            const isRed = thumbsDownCount >= Math.ceil((2 / 3) * (totalCommenters - 1));
+            
+            return isGreen || isRed;
+        });
+        
+        if (hasReviewed) {
+            reviewedCount++;
+        }
+        
+        // Check if ANY row in this issue/group is reported (has rocket emoji)
+        // Only green rows (approved) will be reported
+        const hasReported = issueRows.some(row => {
+            return row.Reported === '✅';
+        });
+        
+        if (hasReported) {
+            reportedCount++;
+        }
+    });
+    
+    // Calculate percentages
+    const reviewPercentage = totalIssues > 0 ? Math.round((reviewedCount / totalIssues) * 100) : 0;
+    const reportPercentage = totalIssues > 0 ? Math.round((reportedCount / totalIssues) * 100) : 0;
+    
+    // Update pie charts
+    updatePieChart('reviewProgress', 'reviewPercentage', reviewPercentage, '#28a745');
+    updatePieChart('reportProgress', 'reportPercentage', reportPercentage, '#007bff');
+    
+    // Update labels
+    document.getElementById('reviewCompleted').textContent = reviewedCount;
+    document.getElementById('reviewTotal').textContent = totalIssues;
+    document.getElementById('reportCompleted').textContent = reportedCount;
+    document.getElementById('reportTotal').textContent = totalIssues;
+}
+
+function updatePieChart(progressId, percentageId, percentage, color) {
+    const circumference = 2 * Math.PI * 90; // radius = 90
+    const progress = (percentage / 100) * circumference;
+    const remaining = circumference - progress;
+    
+    const progressCircle = document.getElementById(progressId);
+    const percentageText = document.getElementById(percentageId);
+    
+    if (progressCircle) {
+        progressCircle.setAttribute('stroke-dasharray', `${progress} ${remaining}`);
+        progressCircle.setAttribute('stroke', color);
+    }
+    
+    if (percentageText) {
+        percentageText.textContent = `${percentage}%`;
+    }
 }
 
 function renderResearchersSection(config, commenters) {
@@ -557,6 +656,123 @@ function renderDuplicateAssignments(assignments, commenters) {
     document.getElementById('duplicateAssignments').innerHTML = html;
 }
 
+function renderTableRow(row, commenters, isInDuplicateGroup, groupId) {
+    const thumbsUpCount = row.thumbsUpCount;
+    const thumbsDownCount = row.thumbsDownCount;
+    const totalCommenters = commenters.length;
+    
+    let rowClass = '';
+    if (thumbsUpCount + 1 >= (2 / 3) * totalCommenters) {
+        rowClass = 'green-row';
+    } else if (thumbsDownCount >= (2 / 3) * (totalCommenters - 1)) {
+        rowClass = 'red-row';
+    }
+    
+    // Add collapsible class if in duplicate group
+    if (isInDuplicateGroup && groupId) {
+        rowClass += ' duplicate-group-row';
+    }
+    
+    const groupIdAttr = isInDuplicateGroup && groupId ? ` data-group-id="${groupId}"` : '';
+    let html = `<tr class="${rowClass}"${groupIdAttr}>`;
+    
+    // Issue number
+    html += `<td><strong>${row.issueNumber}</strong></td>`;
+    
+    // Comment
+    html += `<td><a href="${row.Comment.hyperlink}" target="_blank">${row.Comment.text}</a></td>`;
+    
+    // Reported
+    html += `<td>${row.Reported || ''}</td>`;
+    
+    // Duplicate
+    if (row.isDuplicate) {
+        let dupText = `<strong>${row.proposer}</strong><br>`;
+        dupText += `Group: <strong>${row.groupNumber}</strong>`;
+        
+        if (row.isAutoDuplicate) {
+            dupText += `<br><button class="btn-undupe" onclick="undupeFinding('${row.commentUrl}', '${row.duplicateOf}')">❌ Undupe</button>`;
+        }
+        
+        if (row.otherSpotters && row.otherSpotters.length > 0) {
+            dupText += `<br><small>Also spotted by: ${row.otherSpotters.join(', ')}</small>`;
+        }
+        html += `<td>${dupText}</td>`;
+    } else {
+        html += `<td></td>`;
+    }
+    
+    const assignedTo = row.assignedTo || '';
+    const rowKey = getRowKey(row);
+    const encodedRowKey = encodeURIComponent(rowKey);
+    const assignedToValue = escapeAttribute(assignedTo);
+    
+    let dataAttrs = `data-url="${row.Comment.hyperlink}" data-row-key="${encodedRowKey}"`;
+    if (row.isDuplicate && row.duplicateOf) {
+        const groupUrls = [row.commentUrl, row.duplicateOf].sort();
+        const groupIdAttr = groupUrls.join('||');
+        dataAttrs += ` data-duplicate-group="${groupIdAttr}" data-is-duplicate="true"`;
+    }
+    
+    html += `<td><input type="text" class="assigned-to-input" ${dataAttrs} value="${assignedToValue}" placeholder="Assign to..."></td>`;
+    
+    commenters.forEach(commenter => {
+        const value = row[commenter];
+        html += `<td>${value || ''}</td>`;
+    });
+
+    extraColumns.forEach((column, columnIndex) => {
+        const columnStore = extraColumnData[column.id] || {};
+        const columnValue = columnStore[rowKey] || '';
+        const safeValue = escapeAttribute(columnValue);
+        const placeholder = escapeAttribute(column.name || getDefaultColumnName(columnIndex));
+        html += `<td><input type="text" class="extra-column-input" data-column-id="${column.id}" data-row-key="${encodedRowKey}" value="${safeValue}" placeholder="${placeholder}"></td>`;
+    });
+    
+    html += '</tr>';
+    return html;
+}
+
+function toggleDuplicateGroup(groupId) {
+    const rows = document.querySelectorAll(`tr[data-group-id="${groupId}"]`);
+    const icon = document.querySelector(`.collapse-icon[data-group-id="${groupId}"]`);
+    
+    if (!rows.length || !icon) return;
+    
+    // Check if currently collapsed by checking the second row (first is always visible)
+    const secondRow = rows[1];
+    const isCollapsed = secondRow && (window.getComputedStyle(secondRow).display === 'none' || secondRow.style.display === 'none');
+    
+    // Toggle visibility: always keep first row (D-X.1) visible, toggle the rest
+    rows.forEach((row, index) => {
+        if (index === 0) {
+            // First row (D-X.1) always visible
+            row.style.display = '';
+            
+            // Add bottom border when collapsed to separate from next content
+            if (!isCollapsed) {
+                // Collapsing: add thick bottom border
+                row.classList.add('collapsed-group-last');
+            } else {
+                // Expanding: remove bottom border
+                row.classList.remove('collapsed-group-last');
+            }
+        } else {
+            // Rest of the rows toggle
+            if (isCollapsed) {
+                // Expand: show all rows
+                row.style.display = '';
+            } else {
+                // Collapse: hide rows except first
+                row.style.display = 'none';
+            }
+        }
+    });
+    
+    // Update icon
+    icon.textContent = isCollapsed ? '▼' : '▶';
+}
+
 function renderCommentsTable(rows, commenters) {
     extraColumns.forEach(column => {
         if (!extraColumnData[column.id]) {
@@ -579,79 +795,61 @@ function renderCommentsTable(rows, commenters) {
     headHtml += '</tr>';
     document.getElementById('commentsTableHead').innerHTML = headHtml;
     
+    // Group rows by duplicate groups
+    const duplicateGroups = new Map(); // groupNumber -> [rows]
+    const regularRows = [];
+    
+    rows.forEach(row => {
+        if (row.isDuplicate && row.groupNumber) {
+            if (!duplicateGroups.has(row.groupNumber)) {
+                duplicateGroups.set(row.groupNumber, []);
+            }
+            duplicateGroups.get(row.groupNumber).push(row);
+        } else {
+            regularRows.push(row);
+        }
+    });
+    
     // Body
     let bodyHtml = '';
-    rows.forEach(row => {
-        const thumbsUpCount = row.thumbsUpCount;
-        const thumbsDownCount = row.thumbsDownCount;
-        const totalCommenters = commenters.length;
+    
+    // Render duplicate groups with collapsible headers FIRST (at the top)
+    const sortedGroups = Array.from(duplicateGroups.entries()).sort((a, b) => {
+        // Extract numeric part from "D-1", "D-2", etc.
+        const numA = parseInt(a[0].replace(/^D-/, '')) || 0;
+        const numB = parseInt(b[0].replace(/^D-/, '')) || 0;
+        return numA - numB;
+    });
+    
+    sortedGroups.forEach(([groupNumber, groupRows]) => {
+        // Group header row (always visible, clickable) - NO data-group-id on header!
+        const groupId = `dup-group-${groupNumber}`;
+        bodyHtml += `<tr class="duplicate-group-header" data-header-for="${groupId}">`;
+        bodyHtml += `<td colspan="${5 + commenters.length + extraColumns.length}" style="background-color: #e8f4f8; cursor: pointer; font-weight: bold; padding: 10px;">`;
+        bodyHtml += `<span class="collapse-icon" data-group-id="${groupId}" style="font-size: 1.2em; font-weight: bold; margin-right: 10px; display: inline-block; min-width: 20px;">▼</span>`;
+        bodyHtml += `<span style="font-size: 1.1em;">Duplicate Group ${groupNumber} (${groupRows.length} issue${groupRows.length > 1 ? 's' : ''})</span>`;
+        bodyHtml += `</td></tr>`;
         
-        let rowClass = '';
-        if (thumbsUpCount + 1 >= (2 / 3) * totalCommenters) {
-            rowClass = 'green-row';
-        } else if (thumbsDownCount >= (2 / 3) * (totalCommenters - 1)) {
-            rowClass = 'red-row';
-        }
-        
-        bodyHtml += `<tr class="${rowClass}">`;
-        
-        // Issue number
-        bodyHtml += `<td><strong>${row.issueNumber}</strong></td>`;
-        
-        // Comment
-        bodyHtml += `<td><a href="${row.Comment.hyperlink}" target="_blank">${row.Comment.text}</a></td>`;
-        
-        // Reported
-        bodyHtml += `<td>${row.Reported || ''}</td>`;
-        
-        // Duplicate
-        if (row.isDuplicate) {
-            let dupText = `<strong>${row.proposer}</strong><br>`;
-            dupText += `Group: <strong>${row.groupNumber}</strong>`;
-            
-            if (row.isAutoDuplicate) {
-                dupText += `<br><button class="btn-undupe" onclick="undupeFinding('${row.commentUrl}', '${row.duplicateOf}')">❌ Undupe</button>`;
-            }
-            
-            if (row.otherSpotters && row.otherSpotters.length > 0) {
-                dupText += `<br><small>Also spotted by: ${row.otherSpotters.join(', ')}</small>`;
-            }
-            bodyHtml += `<td>${dupText}</td>`;
-        } else {
-            bodyHtml += `<td></td>`;
-        }
-        
-        const assignedTo = row.assignedTo || '';
-        const rowKey = getRowKey(row);
-        const encodedRowKey = encodeURIComponent(rowKey);
-        const assignedToValue = escapeAttribute(assignedTo);
-        
-        let dataAttrs = `data-url="${row.Comment.hyperlink}" data-row-key="${encodedRowKey}"`;
-        if (row.isDuplicate && row.duplicateOf) {
-            const groupUrls = [row.commentUrl, row.duplicateOf].sort();
-            const groupId = groupUrls.join('||');
-            dataAttrs += ` data-duplicate-group="${groupId}" data-is-duplicate="true"`;
-        }
-        
-        bodyHtml += `<td><input type="text" class="assigned-to-input" ${dataAttrs} value="${assignedToValue}" placeholder="Assign to..."></td>`;
-        
-        commenters.forEach(commenter => {
-            const value = row[commenter];
-            bodyHtml += `<td>${value || ''}</td>`;
+        // Group rows (collapsible) - these have data-group-id
+        groupRows.forEach(row => {
+            bodyHtml += renderTableRow(row, commenters, true, groupId);
         });
-
-        extraColumns.forEach((column, columnIndex) => {
-            const columnStore = extraColumnData[column.id] || {};
-            const columnValue = columnStore[rowKey] || '';
-            const safeValue = escapeAttribute(columnValue);
-            const placeholder = escapeAttribute(column.name || getDefaultColumnName(columnIndex));
-            bodyHtml += `<td><input type="text" class="extra-column-input" data-column-id="${column.id}" data-row-key="${encodedRowKey}" value="${safeValue}" placeholder="${placeholder}"></td>`;
-        });
-        
-        bodyHtml += '</tr>';
+    });
+    
+    // Render regular (non-duplicate) rows after duplicates
+    regularRows.forEach(row => {
+        bodyHtml += renderTableRow(row, commenters, false, null);
     });
     
     document.getElementById('commentsTableBody').innerHTML = bodyHtml;
+    
+    // Add click handlers for collapse/expand
+    document.querySelectorAll('.duplicate-group-header').forEach(header => {
+        header.addEventListener('click', function() {
+            const groupId = this.dataset.headerFor;
+            toggleDuplicateGroup(groupId);
+        });
+    });
     
     document.querySelectorAll('.assigned-to-input').forEach(input => {
         input.addEventListener('blur', async (e) => {

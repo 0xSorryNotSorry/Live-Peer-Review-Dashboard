@@ -39,6 +39,10 @@ async function loadConfig() {
         const data = await fs.readFile(configFile, 'utf8');
         return JSON.parse(data);
     } catch (error) {
+        if (error.code === 'ENOENT') {
+            // File doesn't exist, return null (not an error on first run)
+            return null;
+        }
         console.error('Error reading config file:', error);
         return null;
     }

@@ -81,6 +81,32 @@
             <!-- Researchers List -->
             <div class="researchers-section" id="researchersSection"></div>
 
+            <!-- Progress Pie Charts -->
+            <div class="progress-charts">
+                <div class="chart-container">
+                    <h3>Review Progress</h3>
+                    <svg class="pie-chart" viewBox="0 0 200 200" id="reviewPieChart">
+                        <circle cx="100" cy="100" r="90" fill="none" stroke="#e0e0e0" stroke-width="20" class="pie-bg"></circle>
+                        <circle cx="100" cy="100" r="90" fill="none" stroke="#28a745" stroke-width="20" 
+                                stroke-dasharray="0 565.48" stroke-dashoffset="141.37" 
+                                transform="rotate(-90 100 100)" class="pie-progress" id="reviewProgress"></circle>
+                        <text x="100" y="100" text-anchor="middle" dominant-baseline="middle" class="pie-text" id="reviewPercentage">0%</text>
+                    </svg>
+                    <p class="chart-label"><span id="reviewCompleted">0</span> / <span id="reviewTotal">0</span> reviewed</p>
+                </div>
+                <div class="chart-container">
+                    <h3>Reporting Progress</h3>
+                    <svg class="pie-chart" viewBox="0 0 200 200" id="reportPieChart">
+                        <circle cx="100" cy="100" r="90" fill="none" stroke="#e0e0e0" stroke-width="20" class="pie-bg"></circle>
+                        <circle cx="100" cy="100" r="90" fill="none" stroke="#007bff" stroke-width="20" 
+                                stroke-dasharray="0 565.48" stroke-dashoffset="141.37" 
+                                transform="rotate(-90 100 100)" class="pie-progress" id="reportProgress"></circle>
+                        <text x="100" y="100" text-anchor="middle" dominant-baseline="middle" class="pie-text" id="reportPercentage">0%</text>
+                    </svg>
+                    <p class="chart-label"><span id="reportCompleted">0</span> / <span id="reportTotal">0</span> reported</p>
+                </div>
+            </div>
+
             <!-- Summary Stats -->
             <div class="stats-grid">
                 <div class="stat-card reported">
