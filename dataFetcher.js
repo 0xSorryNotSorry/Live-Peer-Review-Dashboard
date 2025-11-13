@@ -2,6 +2,7 @@ import { graphql } from "@octokit/graphql";
 import fs from "fs/promises";
 import dotenv from "dotenv";
 import puppeteer from "puppeteer";
+import { join } from "path";
 
 dotenv.config();
 
@@ -49,12 +50,13 @@ function truncateText(text, charLimit = 300) {
 function extractDuplicateMarker(commentBody, owner, repo, prNumber) {
     // Pattern 1: Full URL in angle brackets (with optional backticks)
     // Format: Dup `<https://github.com/...>` or Dup <https://github.com/...>
-    const fullUrlRegex = /(?:DUP|Dup)\s+(?:of\s+)?`?<?(https:\/\/github\.com\/[^>\s]+)>?`?/i;
+    const fullUrlRegex =
+        /(?:DUP|Dup)\s+(?:of\s+)?`?<?(https:\/\/github\.com\/[^>\s]+)>?`?/i;
     const fullMatch = commentBody.match(fullUrlRegex);
     if (fullMatch) {
         return fullMatch[1];
     }
-    
+
     // Pattern 2: GitHub anchor format - #discussion_r123456
     const anchorRegex = /(?:DUP|Dup)\s+(?:of\s+)?#discussion_r(\d+)/i;
     const anchorMatch = commentBody.match(anchorRegex);
@@ -62,7 +64,7 @@ function extractDuplicateMarker(commentBody, owner, repo, prNumber) {
         const discussionId = anchorMatch[1];
         return `https://github.com/${owner}/${repo}/pull/${prNumber}#discussion_r${discussionId}`;
     }
-    
+
     // Pattern 3: Issue comment format - #1 (comment) or similar
     const issueCommentRegex = /(?:DUP|Dup)\s+(?:of\s+)?#(\d+)\s*\(comment\)/i;
     const issueMatch = commentBody.match(issueCommentRegex);
@@ -70,10 +72,12 @@ function extractDuplicateMarker(commentBody, owner, repo, prNumber) {
         // This is trickier - GitHub converts PR review comments to this format
         // We'll need to handle this case, but it's ambiguous without the discussion_r ID
         // For now, log a warning and skip
-        console.warn(`Found ambiguous DUP marker format: #${issueMatch[1]} (comment) - cannot resolve to specific comment`);
+        console.warn(
+            `Found ambiguous DUP marker format: #${issueMatch[1]} (comment) - cannot resolve to specific comment`,
+        );
         return null;
     }
-    
+
     return null;
 }
 
@@ -84,7 +88,12 @@ function extractCommentIdFromUrl(url) {
 }
 
 // Fetch PR review comments with reactions using GraphQL
-export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestNumber, undupeFlags = {}) {
+export async function getPRReviewCommentsWithReactions(
+    owner,
+    repo,
+    pullRequestNumber,
+    undupeFlags = {},
+) {
     const rows = [];
     const commenters = [];
     const comments = [];
@@ -93,7 +102,7 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
         nonReported: 0,
         pending: 0,
     };
-    
+
     const duplicateMap = new Map();
     const originalToDuplicates = new Map();
 
@@ -141,9 +150,9 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
         for (const thread of reviewThreads) {
             const isResolved = thread.isResolved;
             const threadComments = thread.comments.nodes;
-            
+
             if (threadComments.length === 0) continue;
-            
+
             // Only process the FIRST comment for display
             const firstComment = threadComments[0];
             const {
@@ -162,7 +171,12 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
             // Scan ALL comments in the thread for DUP markers (last one wins)
             let duplicateOriginalUrl = null;
             for (const comment of threadComments) {
-                const foundDup = extractDuplicateMarker(comment.body, owner, repo, pullRequestNumber);
+                const foundDup = extractDuplicateMarker(
+                    comment.body,
+                    owner,
+                    repo,
+                    pullRequestNumber,
+                );
                 if (foundDup) {
                     duplicateOriginalUrl = foundDup; // Last marker wins
                     console.log(`🔍 Found DUP marker in thread ${commentUrl}:`);
@@ -170,7 +184,7 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
                     console.log(`   Points to: ${foundDup}`);
                 }
             }
-            
+
             const isDuplicate = duplicateOriginalUrl !== null;
 
             const row = {
@@ -235,7 +249,7 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
 
             if (isDuplicate) {
                 duplicateMap.set(commentUrl, duplicateOriginalUrl);
-                
+
                 if (!originalToDuplicates.has(duplicateOriginalUrl)) {
                     originalToDuplicates.set(duplicateOriginalUrl, []);
                 }
@@ -290,7 +304,7 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
     // If A→B and C→B, then A, B, C should all be in the same group
     const urlToGroupId = new Map();
     let nextGroupId = 0;
-    
+
     // Helper function to get or create group ID for a URL
     function getGroupId(url) {
         if (urlToGroupId.has(url)) {
@@ -300,12 +314,12 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
         urlToGroupId.set(url, groupId);
         return groupId;
     }
-    
+
     // Helper function to merge two groups
     function mergeGroups(url1, url2) {
         const group1 = urlToGroupId.get(url1);
         const group2 = urlToGroupId.get(url2);
-        
+
         if (!group1 && !group2) {
             // Neither has a group, create new one
             const newGroupId = getGroupId(url1);
@@ -328,12 +342,12 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
             }
         }
     }
-    
+
     // Process all duplicate relationships and merge into groups
     for (const [dupUrl, originalUrl] of duplicateMap.entries()) {
         mergeGroups(dupUrl, originalUrl);
     }
-    
+
     // Mark all URLs in groups as duplicates
     for (const row of rows) {
         if (urlToGroupId.has(row.commentUrl)) {
@@ -343,25 +357,25 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
             row.isAutoDuplicate = !duplicateMap.has(row.commentUrl);
         }
     }
-    
+
     // Rebuild originalToDuplicates based on unified groups
     originalToDuplicates.clear();
     const groupMembers = new Map();
-    
+
     for (const [url, groupId] of urlToGroupId.entries()) {
         if (!groupMembers.has(groupId)) {
             groupMembers.set(groupId, []);
         }
-        const row = rows.find(r => r.commentUrl === url);
+        const row = rows.find((r) => r.commentUrl === url);
         if (row) {
             groupMembers.get(groupId).push({
                 url: url,
                 proposer: row.proposer,
-                isManual: !row.isAutoDuplicate
+                isManual: !row.isAutoDuplicate,
             });
         }
     }
-    
+
     // Use first member of each group as "original"
     for (const [groupId, members] of groupMembers.entries()) {
         if (members.length > 0) {
@@ -372,7 +386,7 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
 
     // First pass: assign regular issue numbers
     let issueNumber = 1;
-    rows.forEach(row => {
+    rows.forEach((row) => {
         if (!row.isDuplicate) {
             row.issueNumber = issueNumber;
             issueNumber++;
@@ -382,17 +396,17 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
     // Build duplicate groups and assign numbers
     const duplicateGroups = [];
     let groupIndex = 0;
-    
+
     for (const [originalUrl, duplicates] of originalToDuplicates.entries()) {
         groupIndex++;
         const groupNumber = `D-${groupIndex}`;
-        const originalRow = rows.find(r => r.commentUrl === originalUrl);
+        const originalRow = rows.find((r) => r.commentUrl === originalUrl);
 
         // Build a full members list including the original first, then the rest
         const members = [
             {
                 url: originalUrl,
-                proposer: originalRow ? originalRow.proposer : 'Unknown',
+                proposer: originalRow ? originalRow.proposer : "Unknown",
                 isManual: originalRow ? !originalRow.isAutoDuplicate : true,
             },
             ...duplicates,
@@ -401,7 +415,7 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
         // Assign sub-numbers to every member and stamp rows
         const membersWithNumbers = members.map((member, idx) => {
             const subIssueNumber = `${groupNumber}.${idx + 1}`;
-            const memberRow = rows.find(r => r.commentUrl === member.url);
+            const memberRow = rows.find((r) => r.commentUrl === member.url);
             if (memberRow) {
                 memberRow.issueNumber = subIssueNumber;
                 memberRow.groupNumber = groupNumber;
@@ -415,45 +429,47 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
         duplicateGroups.push({
             groupNumber: groupNumber,
             originalUrl: originalUrl,
-            originalProposer: originalRow ? originalRow.proposer : 'Unknown',
-            originalComment: originalRow ? originalRow.Comment.text : 'Original not found',
-            originalIssueNumber: originalRow ? originalRow.issueNumber : 'N/A',
+            originalProposer: originalRow ? originalRow.proposer : "Unknown",
+            originalComment: originalRow
+                ? originalRow.Comment.text
+                : "Original not found",
+            originalIssueNumber: originalRow ? originalRow.issueNumber : "N/A",
             duplicates: membersWithNumbers,
             count: membersWithNumbers.length,
         });
     }
-    
+
     // Third pass: add other spotters info
-    rows.forEach(row => {
+    rows.forEach((row) => {
         if (row.isDuplicate) {
-            const group = duplicateGroups.find(g => {
-                return g.duplicates.some(d => d.url === row.commentUrl);
+            const group = duplicateGroups.find((g) => {
+                return g.duplicates.some((d) => d.url === row.commentUrl);
             });
             if (group) {
                 const otherSpotters = group.duplicates
-                    .filter(dup => dup.url !== row.commentUrl)
-                    .map(dup => {
-                        const dupRow = rows.find(r => r.commentUrl === dup.url);
+                    .filter((dup) => dup.url !== row.commentUrl)
+                    .map((dup) => {
+                        const dupRow = rows.find((r) => r.commentUrl === dup.url);
                         return `${dupRow.issueNumber} (${dup.proposer})`;
                     });
-                
+
                 row.otherSpotters = otherSpotters;
                 row.groupNumber = group.groupNumber;
             }
         }
     });
-    
+
     // Sort rows: regular issues first, then duplicates grouped together
     rows.sort((a, b) => {
         // Put duplicates first
         if (a.isDuplicate && !b.isDuplicate) return -1;
         if (!a.isDuplicate && b.isDuplicate) return 1;
-        
+
         // If both non-duplicates, sort by ascending issueNumber (numeric)
         if (!a.isDuplicate && !b.isDuplicate) {
             return a.issueNumber - b.issueNumber;
         }
-        
+
         // Both duplicates - sort by group number then sub-number
         if (a.groupNumber !== b.groupNumber) {
             return a.groupNumber.localeCompare(b.groupNumber);
@@ -463,34 +479,33 @@ export async function getPRReviewCommentsWithReactions(owner, repo, pullRequestN
 
     const duplicateAssignments = assignDuplicates(duplicateGroups, commenters);
 
-    return { 
-        rows, 
-        commenters, 
-        reactionStats, 
+    return {
+        rows,
+        commenters,
+        reactionStats,
         stats,
         duplicateGroups,
         duplicateAssignments,
     };
 }
 
-
 function assignDuplicates(duplicateGroups, commenters) {
     const assignments = {};
-    
-    commenters.forEach(commenter => {
+
+    commenters.forEach((commenter) => {
         assignments[commenter] = [];
     });
-    
-    duplicateGroups.forEach(group => {
-        const duplicateProposers = [...new Set(group.duplicates.map(d => d.proposer))];
-        
+
+    duplicateGroups.forEach((group) => {
+        const duplicateProposers = [...new Set(group.duplicates.map((d) => d.proposer))];
+
         duplicateProposers.sort();
-        
-        group.duplicates.forEach(dup => {
+
+        group.duplicates.forEach((dup) => {
             if (!assignments[dup.proposer]) {
                 assignments[dup.proposer] = [];
             }
-            
+
             assignments[dup.proposer].push({
                 originalUrl: group.originalUrl,
                 originalProposer: group.originalProposer,
@@ -499,7 +514,7 @@ function assignDuplicates(duplicateGroups, commenters) {
             });
         });
     });
-    
+
     return assignments;
 }
 
@@ -531,6 +546,8 @@ function getEmoji(content) {
 
 export async function generatePDF(repos, name) {
     const generatedOn = formatDateTime(new Date());
+    const outputDir = process.env.OUTPUT_DIR || ".";
+    await fs.mkdir(outputDir, { recursive: true });
     let htmlContent = `
     <!DOCTYPE html>
     <html>
@@ -592,8 +609,14 @@ export async function generatePDF(repos, name) {
         console.info(
             `\nProcessing ${owner}/${repo} - Pull Request #${pullRequestNumber}`,
         );
-        const { rows, commenters, reactionStats, stats, duplicateGroups, duplicateAssignments } =
-            await getPRReviewCommentsWithReactions(owner, repo, pullRequestNumber);
+        const {
+            rows,
+            commenters,
+            reactionStats,
+            stats,
+            duplicateGroups,
+            duplicateAssignments,
+        } = await getPRReviewCommentsWithReactions(owner, repo, pullRequestNumber);
 
         htmlContent += `<h1>${owner}/${repo} - Pull Request #${pullRequestNumber}</h1>`;
 
@@ -654,21 +677,21 @@ export async function generatePDF(repos, name) {
                 </tr>
             `;
 
-            duplicateGroups.forEach(group => {
+            duplicateGroups.forEach((group) => {
                 htmlContent += `
                   <tr>
                     <td><strong>${group.originalIssueNumber}</strong></td>
                     <td><a href="${group.originalUrl}">${group.originalComment}</a></td>
                     <td>${group.originalProposer}</td>
                     <td>`;
-                
+
                 group.duplicates.forEach((dup, idx) => {
                     htmlContent += `<a href="${dup.url}">${dup.issueNumber} (${dup.proposer})</a>`;
                     if (idx < group.duplicates.length - 1) {
-                        htmlContent += ', ';
+                        htmlContent += ", ";
                     }
                 });
-                
+
                 htmlContent += `</td>
                     <td>${group.count}</td>
                   </tr>
@@ -678,7 +701,11 @@ export async function generatePDF(repos, name) {
             htmlContent += `</table>`;
         }
 
-        if (Object.keys(duplicateAssignments).some(key => duplicateAssignments[key].length > 0)) {
+        if (
+            Object.keys(duplicateAssignments).some(
+                (key) => duplicateAssignments[key].length > 0,
+            )
+        ) {
             htmlContent += `
               <h2>Duplicates</h2>
               <table>
@@ -689,21 +716,21 @@ export async function generatePDF(repos, name) {
                 </tr>
             `;
 
-            commenters.forEach(commenter => {
+            commenters.forEach((commenter) => {
                 const assignments = duplicateAssignments[commenter] || [];
                 if (assignments.length > 0) {
                     htmlContent += `
                       <tr>
                         <td>${commenter}</td>
                         <td>`;
-                    
+
                     assignments.forEach((assignment, idx) => {
                         htmlContent += `<a href="${assignment.duplicateUrl}">Dup of ${assignment.originalProposer}'s finding</a>`;
                         if (idx < assignments.length - 1) {
-                            htmlContent += '<br>';
+                            htmlContent += "<br>";
                         }
                     });
-                    
+
                     htmlContent += `</td>
                         <td>${assignments.length}</td>
                       </tr>
@@ -745,7 +772,9 @@ export async function generatePDF(repos, name) {
                 let dupText = `<strong>${dataRow.proposer}</strong><br>`;
                 dupText += `<a href="${dataRow.duplicateOf}">DUP of #${dataRow.originalIssueNumber} (${dataRow.originalProposer})</a>`;
                 if (dataRow.otherSpotters && dataRow.otherSpotters.length > 0) {
-                    dupText += `<br><small>Also spotted by: ${dataRow.otherSpotters.join(', ')}</small>`;
+                    dupText += `<br><small>Also spotted by: ${dataRow.otherSpotters.join(
+                        ", ",
+                    )}</small>`;
                 }
                 htmlContent += `<td>${dupText}</td>`;
             } else {
@@ -774,7 +803,7 @@ export async function generatePDF(repos, name) {
     await page.setContent(htmlContent, { waitUntil: "networkidle0" });
 
     await page.pdf({
-        path: `${name}.pdf`,
+        path: join(outputDir, `${name}.pdf`),
         format: "A4",
         landscape: true,
         printBackground: true,
@@ -784,6 +813,3 @@ export async function generatePDF(repos, name) {
     await browser.close();
     console.info(`PDF file created: ${name}.pdf`);
 }
-
-
-

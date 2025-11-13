@@ -1,0 +1,17 @@
+node_modules
+npm-debug.log*
+.npmrc
+.git
+.gitignore
+.DS_Store
+Dockerfile
+docker-compose*.yml
+.env
+config.json
+researchers.json
+assignments.json
+*.pdf
+audit-structured-org-spdbtc_Review.pdf
+public/*.map
+
+

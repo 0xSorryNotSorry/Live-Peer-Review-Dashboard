@@ -23,6 +23,32 @@ Create a `.env` file in this directory with:
 GITHUB_TOKEN=your_github_token_here
 ```
 
+## Docker (recommended)
+
+Quickstart:
+
+```bash
+docker compose up -d --build
+```
+
+Then open `http://localhost:3000`.
+
+What gets persisted:
+- The app uses a named volume `live-peer-review-dashboard-data` mounted at `/data`
+- Files stored there:
+  - `config.json` (PR selection and report name)
+  - `researchers.json` (allowlist and lead researcher)
+  - `assignments.json` (saved assignments)
+  - `*.pdf` exports
+
+Set your GitHub token:
+- Put `GITHUB_TOKEN=...` in a `.env` file in this repo (Compose auto-loads it)
+
+Environment variables (overrides):
+- `PORT` (default `3000`)
+- `APP_DATA_DIR` (default `/data` in the container)
+- `CONFIG_DIR` (default `/data`, set `CONFIG_FILE` to override exact path)
+- `OUTPUT_DIR` (default `/data`, PDFs write here)
 ## Usage
 
 Start the live dashboard:

@@ -1,6 +1,6 @@
 import express from 'express';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
 import fs from 'fs/promises';
 import { getPRReviewCommentsWithReactions, generatePDF } from './dataFetcher.js';
 
@@ -8,10 +8,23 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
 // In-memory undupe flags (cleared on server restart)
 const undupeFlags = {};
+
+// Data directory for configs and app-generated files (defaults to working directory)
+const DATA_DIR = process.env.APP_DATA_DIR ? resolve(process.env.APP_DATA_DIR) : process.cwd();
+function dataPath(filename) {
+    return join(DATA_DIR, filename);
+}
+async function ensureDataDir() {
+    try {
+        await fs.mkdir(DATA_DIR, { recursive: true });
+    } catch (_) {
+        // ignore
+    }
+}
 
 // Middleware
 app.use(express.json());
@@ -20,7 +33,10 @@ app.use(express.static(join(__dirname, 'public')));
 // Load config
 async function loadConfig() {
     try {
-        const data = await fs.readFile('./config.json', 'utf8');
+        const configFile = process.env.CONFIG_FILE
+            ? resolve(process.env.CONFIG_FILE)
+            : (process.env.CONFIG_DIR ? join(resolve(process.env.CONFIG_DIR), 'config.json') : dataPath('config.json'));
+        const data = await fs.readFile(configFile, 'utf8');
         return JSON.parse(data);
     } catch (error) {
         console.error('Error reading config file:', error);
@@ -31,7 +47,7 @@ async function loadConfig() {
 // Load researchers config
 async function loadResearchers() {
     try {
-        const data = await fs.readFile('./researchers.json', 'utf8');
+        const data = await fs.readFile(dataPath('researchers.json'), 'utf8');
         return JSON.parse(data);
     } catch (error) {
         // Create default if doesn't exist
@@ -39,7 +55,8 @@ async function loadResearchers() {
             researchers: [],
             lsr: null
         };
-        await fs.writeFile('./researchers.json', JSON.stringify(defaultResearchers, null, 2));
+        await ensureDataDir();
+        await fs.writeFile(dataPath('researchers.json'), JSON.stringify(defaultResearchers, null, 2));
         return defaultResearchers;
     }
 }
@@ -47,7 +64,7 @@ async function loadResearchers() {
 // Load assignments
 async function loadAssignments() {
     try {
-        const data = await fs.readFile('./assignments.json', 'utf8');
+        const data = await fs.readFile(dataPath('assignments.json'), 'utf8');
         return JSON.parse(data);
     } catch (error) {
         return {};
@@ -56,12 +73,14 @@ async function loadAssignments() {
 
 // Save assignments
 async function saveAssignments(assignments) {
-    await fs.writeFile('./assignments.json', JSON.stringify(assignments, null, 2));
+    await ensureDataDir();
+    await fs.writeFile(dataPath('assignments.json'), JSON.stringify(assignments, null, 2));
 }
 
 // Save researchers config
 async function saveResearchers(researchers) {
-    await fs.writeFile('./researchers.json', JSON.stringify(researchers, null, 2));
+    await ensureDataDir();
+    await fs.writeFile(dataPath('researchers.json'), JSON.stringify(researchers, null, 2));
 }
 
 // API: Get PR data
@@ -169,7 +188,11 @@ app.post('/api/update-pr', async (req, res) => {
         }];
         config.name = `${repo}_Review`;
         
-        await fs.writeFile('./config.json', JSON.stringify(config, null, 4));
+        await ensureDataDir();
+        const configFile = process.env.CONFIG_FILE
+            ? resolve(process.env.CONFIG_FILE)
+            : (process.env.CONFIG_DIR ? join(resolve(process.env.CONFIG_DIR), 'config.json') : dataPath('config.json'));
+        await fs.writeFile(configFile, JSON.stringify(config, null, 4));
         res.json({ success: true });
     } catch (error) {
         console.error('Error updating PR config:', error);
@@ -230,7 +253,9 @@ app.post('/api/generate-pdf', async (req, res) => {
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         
-        const fileBuffer = await fs.readFile(filename);
+        // PDF is generated to OUTPUT_DIR or current dir; read from there
+        const outputDir = process.env.OUTPUT_DIR ? resolve(process.env.OUTPUT_DIR) : process.cwd();
+        const fileBuffer = await fs.readFile(join(outputDir, filename));
         res.send(fileBuffer);
     } catch (error) {
         console.error('Error generating PDF:', error);
