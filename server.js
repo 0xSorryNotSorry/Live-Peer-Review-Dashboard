@@ -98,7 +98,13 @@ app.get('/api/data', async (req, res) => {
             return res.status(400).json({ error: 'No repository configured' });
         }
 
-        const repo = config.repositories[0];
+        // Get active PR index from query param or use first PR
+        const prIndex = parseInt(req.query.prIndex) || 0;
+        if (prIndex >= config.repositories.length) {
+            return res.status(400).json({ error: 'Invalid PR index' });
+        }
+
+        const repo = config.repositories[prIndex];
         const data = await getPRReviewCommentsWithReactions(
             repo.owner,
             repo.repo,
@@ -238,6 +244,94 @@ app.post('/api/undupe', async (req, res) => {
         res.json({ success: true });
     } catch (error) {
         console.error('Error undupe:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// API: Get all PRs
+app.get('/api/prs', async (req, res) => {
+    try {
+        const config = await loadConfig();
+        if (!config || !config.repositories) {
+            return res.json({ repositories: [] });
+        }
+        res.json({ repositories: config.repositories });
+    } catch (error) {
+        console.error('Error getting PRs:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// API: Add PR
+app.post('/api/prs', async (req, res) => {
+    try {
+        const { owner, repo, pullRequestNumber } = req.body;
+        
+        if (!owner || !repo || !pullRequestNumber) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+        
+        const config = await loadConfig() || { repositories: [], name: 'Audit Review' };
+        
+        // Check if PR already exists
+        const exists = config.repositories.some(r => 
+            r.owner === owner && r.repo === repo && r.pullRequestNumber === pullRequestNumber
+        );
+        
+        if (exists) {
+            return res.status(400).json({ error: 'PR already exists' });
+        }
+        
+        config.repositories.push({ owner, repo, pullRequestNumber });
+        await fs.writeFile('./config.json', JSON.stringify(config, null, 2));
+        
+        console.log(`✅ Added PR: ${owner}/${repo}#${pullRequestNumber}`);
+        res.json({ success: true, repositories: config.repositories });
+    } catch (error) {
+        console.error('Error adding PR:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// API: Remove PR
+app.delete('/api/prs/:index', async (req, res) => {
+    try {
+        const index = parseInt(req.params.index);
+        const config = await loadConfig();
+        
+        if (!config || !config.repositories || index >= config.repositories.length) {
+            return res.status(400).json({ error: 'Invalid PR index' });
+        }
+        
+        const removed = config.repositories.splice(index, 1)[0];
+        await fs.writeFile('./config.json', JSON.stringify(config, null, 2));
+        
+        console.log(`🗑️ Removed PR: ${removed.owner}/${removed.repo}#${removed.pullRequestNumber}`);
+        res.json({ success: true, repositories: config.repositories });
+    } catch (error) {
+        console.error('Error removing PR:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// API: Update all PRs (for custom labels)
+app.put('/api/prs/update-all', async (req, res) => {
+    try {
+        const { repositories } = req.body;
+        
+        if (!repositories || !Array.isArray(repositories)) {
+            return res.status(400).json({ error: 'Invalid repositories data' });
+        }
+        
+        const config = await loadConfig() || { repositories: [], name: 'Audit Review' };
+        config.repositories = repositories;
+        
+        await fs.writeFile('./config.json', JSON.stringify(config, null, 2));
+        
+        console.log(`✅ Updated all PRs (${repositories.length} total)`);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error updating PRs:', error);
         res.status(500).json({ error: error.message });
     }
 });

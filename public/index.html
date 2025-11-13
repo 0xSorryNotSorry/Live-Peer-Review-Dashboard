@@ -34,6 +34,12 @@
             </div>
         </div>
 
+        <!-- PR Tabs -->
+        <div class="pr-tabs-container" id="prTabsContainer" style="display: none;">
+            <div class="pr-tabs" id="prTabs"></div>
+            <button id="managePRs" class="btn btn-secondary btn-manage-prs">⚙️ Manage PRs</button>
+        </div>
+
         <div class="controls">
             <div class="control-group">
                 <label>Auto-refresh:</label>
@@ -67,6 +73,33 @@
                     <h3>Add New Researcher</h3>
                     <input type="text" id="newResearcherHandle" placeholder="GitHub handle">
                     <button id="addResearcher" class="btn btn-primary">Add</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- PR Management Modal -->
+        <div id="prManagementModal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2>Manage Pull Requests</h2>
+                
+                <div class="pr-list" id="prList"></div>
+                
+                <div class="add-pr">
+                    <h3>Add New PR</h3>
+                    <div class="pr-url-input">
+                        <input type="text" id="newPrUrl" placeholder="Paste GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)">
+                        <button id="addPRFromUrl" class="btn btn-primary">Add from URL</button>
+                    </div>
+                    
+                    <div class="divider">OR</div>
+                    
+                    <div class="pr-inputs">
+                        <input type="text" id="newPrOwner" placeholder="Owner (e.g., oak-security)">
+                        <input type="text" id="newPrRepo" placeholder="Repository">
+                        <input type="number" id="newPrNumber" placeholder="PR #">
+                    </div>
+                    <button id="addPR" class="btn btn-primary">Add PR</button>
                 </div>
             </div>
         </div>

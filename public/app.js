@@ -7,6 +7,8 @@ let latestRows = [];
 let latestCommenters = [];
 let isNightMode = false;
 let currentRepoKey = null;
+let allPRs = [];
+let activePRIndex = 0;
 
 const EXTRA_COLUMNS_PREFIX = 'arm-extra-columns:';
 const EXTRA_COLUMN_DATA_PREFIX = 'arm-extra-column-data:';
@@ -135,10 +137,318 @@ function applyNightModeState() {
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
-    loadCurrentConfig();
-    loadData();
+    loadAllPRs();
     // Don't start auto-refresh by default (manual mode is selected)
 });
+
+// Load all PRs and render tabs
+async function loadAllPRs() {
+    try {
+        const response = await fetch('/api/prs');
+        const data = await response.json();
+        allPRs = data.repositories || [];
+        
+        if (allPRs.length > 0) {
+            // Load current config into form fields
+            const activeRepo = allPRs[activePRIndex];
+            if (activeRepo) {
+                document.getElementById('prOwner').value = activeRepo.owner;
+                document.getElementById('prRepo').value = activeRepo.repo;
+                document.getElementById('prNumber').value = activeRepo.pullRequestNumber;
+            }
+            
+            renderPRTabs();
+            loadData();
+        } else {
+            // No PRs configured, show initial config UI
+            document.getElementById('loading').style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error loading PRs:', error);
+        document.getElementById('loading').style.display = 'none';
+    }
+}
+
+// Render PR tabs
+function renderPRTabs() {
+    if (allPRs.length === 0) {
+        document.getElementById('prTabsContainer').style.display = 'none';
+        return;
+    }
+    
+    document.getElementById('prTabsContainer').style.display = 'flex';
+    const tabsContainer = document.getElementById('prTabs');
+    
+    let html = '';
+    allPRs.forEach((pr, index) => {
+        const isActive = index === activePRIndex;
+        // Use custom label if set, otherwise use short format: repo#PR
+        const label = pr.customLabel || `${pr.repo}#${pr.pullRequestNumber}`;
+        html += `<div class="pr-tab ${isActive ? 'active' : ''}" data-index="${index}" title="Double-click to edit label\n${pr.owner}/${pr.repo}#${pr.pullRequestNumber}">${label}</div>`;
+    });
+    
+    tabsContainer.innerHTML = html;
+    
+    // Add click handlers
+    document.querySelectorAll('.pr-tab').forEach(tab => {
+        tab.addEventListener('click', function(e) {
+            const index = parseInt(this.dataset.index);
+            switchToPR(index);
+        });
+        
+        // Add double-click to edit
+        tab.addEventListener('dblclick', function(e) {
+            e.stopPropagation();
+            const index = parseInt(this.dataset.index);
+            editTabLabel(index, this);
+        });
+    });
+    
+    // Auto-scroll to active tab
+    scrollToActiveTab();
+}
+
+// Scroll active tab into view
+function scrollToActiveTab() {
+    const activeTab = document.querySelector('.pr-tab.active');
+    if (activeTab) {
+        activeTab.scrollIntoView({
+            behavior: 'smooth',
+            block: 'nearest',
+            inline: 'center'
+        });
+    }
+}
+
+// Edit tab label
+function editTabLabel(index, tabElement) {
+    const pr = allPRs[index];
+    const currentLabel = pr.customLabel || `${pr.repo}#${pr.pullRequestNumber}`;
+    
+    const newLabel = prompt('Enter custom tab label:', currentLabel);
+    
+    if (newLabel !== null && newLabel.trim() !== '') {
+        pr.customLabel = newLabel.trim();
+        
+        // Save to config
+        saveAllPRs();
+        
+        // Re-render tabs
+        renderPRTabs();
+    }
+}
+
+// Save all PRs to server
+async function saveAllPRs() {
+    try {
+        const response = await fetch('/api/prs/update-all', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ repositories: allPRs })
+        });
+        
+        const data = await response.json();
+        if (!data.success) {
+            console.error('Failed to save PR labels');
+        }
+    } catch (error) {
+        console.error('Error saving PR labels:', error);
+    }
+}
+
+// Switch to a different PR
+function switchToPR(index) {
+    if (index === activePRIndex) return;
+    
+    activePRIndex = index;
+    
+    // Update form fields with new active PR
+    const activeRepo = allPRs[activePRIndex];
+    if (activeRepo) {
+        document.getElementById('prOwner').value = activeRepo.owner;
+        document.getElementById('prRepo').value = activeRepo.repo;
+        document.getElementById('prNumber').value = activeRepo.pullRequestNumber;
+    }
+    
+    renderPRTabs();
+    loadData();
+}
+
+// Open PR management modal
+function openPRManagementModal() {
+    const modal = document.getElementById('prManagementModal');
+    modal.style.display = 'block';
+    renderPRList();
+}
+
+// Render PR list in modal
+function renderPRList() {
+    const container = document.getElementById('prList');
+    
+    if (allPRs.length === 0) {
+        container.innerHTML = '<p style="text-align: center; color: #666;">No PRs configured yet. Add one below.</p>';
+        return;
+    }
+    
+    let html = '';
+    allPRs.forEach((pr, index) => {
+        html += `
+            <div class="pr-item">
+                <div class="pr-item-info">
+                    <strong>${pr.owner}/${pr.repo} - PR #${pr.pullRequestNumber}</strong>
+                    <small style="color: #666;">https://github.com/${pr.owner}/${pr.repo}/pull/${pr.pullRequestNumber}</small>
+                </div>
+                <div class="pr-item-actions">
+                    <button class="btn-remove-pr" onclick="removePR(${index})">🗑️ Remove</button>
+                </div>
+            </div>
+        `;
+    });
+    
+    container.innerHTML = html;
+}
+
+// Add new PR from URL
+async function addNewPRFromUrl() {
+    const url = document.getElementById('newPrUrl').value.trim();
+    
+    if (!url) {
+        alert('Please paste a GitHub PR URL');
+        return;
+    }
+    
+    const parsed = parsePRUrl(url);
+    if (!parsed) {
+        alert('Invalid GitHub PR URL. Format: https://github.com/owner/repo/pull/123');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/prs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(parsed)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            allPRs = data.repositories;
+            renderPRList();
+            renderPRTabs();
+            
+            // Clear input
+            document.getElementById('newPrUrl').value = '';
+            
+            alert('✅ PR added successfully!');
+            
+            // Switch to the newly added PR
+            activePRIndex = allPRs.length - 1;
+            renderPRTabs();
+            
+            // Close modal and load data
+            document.getElementById('prManagementModal').style.display = 'none';
+            loadData();
+        } else {
+            alert('❌ ' + (data.error || 'Failed to add PR'));
+        }
+    } catch (error) {
+        console.error('Error adding PR:', error);
+        alert('❌ Error adding PR');
+    }
+}
+
+// Add new PR
+async function addNewPR() {
+    const owner = document.getElementById('newPrOwner').value.trim();
+    const repo = document.getElementById('newPrRepo').value.trim();
+    const pullRequestNumber = parseInt(document.getElementById('newPrNumber').value);
+    
+    if (!owner || !repo || !pullRequestNumber) {
+        alert('Please fill in all fields');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/prs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ owner, repo, pullRequestNumber })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            allPRs = data.repositories;
+            renderPRList();
+            renderPRTabs();
+            
+            // Clear inputs
+            document.getElementById('newPrOwner').value = '';
+            document.getElementById('newPrRepo').value = '';
+            document.getElementById('newPrNumber').value = '';
+            
+            alert('✅ PR added successfully!');
+            
+            // Switch to the newly added PR
+            activePRIndex = allPRs.length - 1;
+            renderPRTabs();
+            
+            // Close modal and load data
+            document.getElementById('prManagementModal').style.display = 'none';
+            loadData();
+        } else {
+            alert('❌ ' + (data.error || 'Failed to add PR'));
+        }
+    } catch (error) {
+        console.error('Error adding PR:', error);
+        alert('❌ Error adding PR');
+    }
+}
+
+// Remove PR
+async function removePR(index) {
+    if (!confirm('Are you sure you want to remove this PR?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/prs/${index}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            allPRs = data.repositories;
+            renderPRList();
+            
+            // If we removed the active PR, switch to first PR
+            if (index === activePRIndex) {
+                activePRIndex = 0;
+                if (allPRs.length > 0) {
+                    renderPRTabs();
+                    loadData();
+                } else {
+                    // No PRs left
+                    document.getElementById('prTabsContainer').style.display = 'none';
+                    document.getElementById('content').style.display = 'none';
+                }
+            } else if (index < activePRIndex) {
+                // Adjust active index if we removed a PR before it
+                activePRIndex--;
+            }
+            
+            renderPRTabs();
+            alert('✅ PR removed successfully!');
+        } else {
+            alert('❌ ' + (data.error || 'Failed to remove PR'));
+        }
+    } catch (error) {
+        console.error('Error removing PR:', error);
+        alert('❌ Error removing PR');
+    }
+}
 
 function setupEventListeners() {
     // Refresh interval change
@@ -252,6 +562,39 @@ function setupEventListeners() {
             localStorage.setItem('arm-night-mode', isNightMode ? 'true' : 'false');
         });
     }
+    
+    // PR Management Modal
+    const managePRsBtn = document.getElementById('managePRs');
+    if (managePRsBtn) {
+        managePRsBtn.addEventListener('click', openPRManagementModal);
+    }
+    
+    const addPRBtn = document.getElementById('addPR');
+    if (addPRBtn) {
+        addPRBtn.addEventListener('click', addNewPR);
+    }
+    
+    const addPRFromUrlBtn = document.getElementById('addPRFromUrl');
+    if (addPRFromUrlBtn) {
+        addPRFromUrlBtn.addEventListener('click', addNewPRFromUrl);
+    }
+    
+    // Close PR management modal
+    const prModal = document.getElementById('prManagementModal');
+    if (prModal) {
+        const closeBtn = prModal.querySelector('.close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                prModal.style.display = 'none';
+            });
+        }
+        
+        window.addEventListener('click', (e) => {
+            if (e.target === prModal) {
+                prModal.style.display = 'none';
+            }
+        });
+    }
 }
 
 function parsePRUrl(url) {
@@ -314,49 +657,52 @@ async function syncPRFromUrl() {
     }
 }
 
-async function loadCurrentConfig() {
-    try {
-        const response = await fetch('/api/data');
-        const data = await response.json();
-        
-        if (data.repository) {
-            document.getElementById('prOwner').value = data.repository.owner;
-            document.getElementById('prRepo').value = data.repository.repo;
-            document.getElementById('prNumber').value = data.repository.pullRequestNumber;
-        }
-    } catch (error) {
-        console.error('Error loading config:', error);
-    }
-}
+// Removed - config is now loaded from allPRs array
 
 async function syncPR() {
     const owner = document.getElementById('prOwner').value.trim();
     const repo = document.getElementById('prRepo').value.trim();
-    const prNumber = parseInt(document.getElementById('prNumber').value);
+    const pullRequestNumber = document.getElementById('prNumber').value.trim();
     
-    if (!owner || !repo || !prNumber) {
-        alert('Please fill in all PR fields');
+    if (!owner || !repo || !pullRequestNumber) {
+        alert('Please fill in all fields');
         return;
     }
     
     const btn = document.getElementById('syncPR');
     btn.disabled = true;
-    btn.textContent = '⏳ Syncing...';
+    btn.textContent = '⏳ Adding...';
     
     try {
-        const response = await fetch('/api/update-pr', {
+        // Check if PR already exists
+        const exists = allPRs.some(pr => 
+            pr.owner === owner && pr.repo === repo && pr.pullRequestNumber === parseInt(pullRequestNumber)
+        );
+        
+        if (exists) {
+            alert('ℹ️ This PR is already configured. Use the tabs to switch to it.');
+            btn.disabled = false;
+            btn.textContent = '🔄 Sync PR';
+            return;
+        }
+        
+        // Add the PR
+        const response = await fetch('/api/prs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ owner, repo, pullRequestNumber: prNumber })
+            body: JSON.stringify({ owner, repo, pullRequestNumber: parseInt(pullRequestNumber) })
         });
         
-        const result = await response.json();
+        const data = await response.json();
         
-        if (result.success) {
-            alert('✅ PR updated! Refreshing data...');
+        if (data.success) {
+            allPRs = data.repositories;
+            activePRIndex = allPRs.length - 1; // Switch to the newly added PR
+            renderPRTabs();
+            alert('✅ PR added successfully!');
             await loadData();
         } else {
-            alert('❌ Error updating PR');
+            alert('❌ ' + (data.error || 'Failed to add PR'));
         }
     } catch (error) {
         alert('❌ Error: ' + error.message);
@@ -385,7 +731,8 @@ async function loadData() {
         document.getElementById('loading').style.display = 'block';
         document.getElementById('error').style.display = 'none';
         
-        const response = await fetch('/api/data');
+        // Fetch data for the active PR
+        const response = await fetch(`/api/data?prIndex=${activePRIndex}`);
         const data = await response.json();
         
         if (data.error) {
