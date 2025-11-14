@@ -116,7 +116,33 @@ app.get('/api/data', async (req, res) => {
         if (researchersConfig.researchers.length > 0) {
             const allowedHandles = researchersConfig.researchers.map(r => r.handle);
             data.rows = data.rows.filter(row => allowedHandles.includes(row.proposer));
-            data.commenters = data.commenters.filter(c => allowedHandles.includes(c));
+            
+            // Ensure all configured researchers appear in commenters list (even if they haven't proposed)
+            const allResearchers = new Set(allowedHandles);
+            data.commenters.forEach(c => allResearchers.add(c));
+            data.commenters = Array.from(allResearchers).filter(c => allowedHandles.includes(c));
+            
+            // Initialize reaction stats for researchers who haven't proposed
+            allowedHandles.forEach(handle => {
+                if (!data.reactionStats[handle]) {
+                    // Calculate their reactions across all comments
+                    let reacted = 0;
+                    let total = 0;
+                    data.rows.forEach(row => {
+                        if (row.proposer !== handle) {
+                            total++;
+                            if (row.reactions && row.reactions[handle]) {
+                                reacted++;
+                            }
+                        }
+                    });
+                    const percentage = total === 0 ? 100 : Math.round((reacted / total) * 100);
+                    data.reactionStats[handle] = {
+                        text: `${reacted}/${total} (${percentage}%)`,
+                        percentage: percentage
+                    };
+                }
+            });
         }
 
         // Add assignments to rows

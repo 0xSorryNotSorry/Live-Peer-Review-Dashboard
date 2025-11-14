@@ -1,4 +1,14 @@
 {
-  "researchers": [],
-  "lsr": null
+  "researchers": [
+    {
+      "handle": "andyfeili"
+    },
+    {
+      "handle": "0xSorryNotSorry"
+    },
+    {
+      "handle": "EBhub"
+    }
+  ],
+  "lsr": "andyfeili"
 }
