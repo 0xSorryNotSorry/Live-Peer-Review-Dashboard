@@ -911,6 +911,96 @@ body.dark-mode .red-row {
     background: rgba(255, 0, 0, 0.15) !important;
 }
 
+/* Floating Refresh Button */
+.floating-refresh {
+    position: fixed;
+    bottom: 80px;
+    right: 30px;
+    width: 60px;
+    height: 60px;
+    background: #007bff;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    cursor: move;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+    transition: all 0.3s;
+    user-select: none;
+}
+
+.floating-refresh:hover {
+    background: #0056b3;
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.floating-refresh:active {
+    transform: scale(0.95);
+}
+
+.floating-refresh.dragging {
+    opacity: 0.8;
+    cursor: grabbing;
+}
+
+/* Go to Top Button */
+.go-to-top {
+    position: fixed;
+    bottom: 20px;
+    right: 30px;
+    width: 50px;
+    height: 50px;
+    background: #28a745;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    font-size: 24px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 999;
+    transition: all 0.3s;
+    display: none;
+}
+
+.go-to-top:hover {
+    background: #218838;
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.go-to-top:active {
+    transform: scale(0.95);
+}
+
+.go-to-top.visible {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Dark mode styles */
+body.dark-mode .floating-refresh {
+    background: #7CFC00;
+    color: #003300;
+}
+
+body.dark-mode .floating-refresh:hover {
+    background: #adff2f;
+}
+
+body.dark-mode .go-to-top {
+    background: #00ff6a;
+    color: #003300;
+}
+
+body.dark-mode .go-to-top:hover {
+    background: #7CFC00;
+}
+
 body.dark-mode .duplicate-group-header {
     background-color: rgba(0, 255, 106, 0.15) !important;
 }

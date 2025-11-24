@@ -48,10 +48,11 @@ async function loadConfig() {
     }
 }
 
-// Load researchers config
-async function loadResearchers() {
+// Load researchers config for a specific PR
+async function loadResearchers(owner, repo, prNumber) {
     try {
-        const data = await fs.readFile(dataPath('researchers.json'), 'utf8');
+        const filename = `researchers-${owner}-${repo}-${prNumber}.json`;
+        const data = await fs.readFile(dataPath(filename), 'utf8');
         return JSON.parse(data);
     } catch (error) {
         // Create default if doesn't exist
@@ -59,8 +60,6 @@ async function loadResearchers() {
             researchers: [],
             lsr: null
         };
-        await ensureDataDir();
-        await fs.writeFile(dataPath('researchers.json'), JSON.stringify(defaultResearchers, null, 2));
         return defaultResearchers;
     }
 }
@@ -81,18 +80,17 @@ async function saveAssignments(assignments) {
     await fs.writeFile(dataPath('assignments.json'), JSON.stringify(assignments, null, 2));
 }
 
-// Save researchers config
-async function saveResearchers(researchers) {
+// Save researchers config for a specific PR
+async function saveResearchers(owner, repo, prNumber, researchers) {
     await ensureDataDir();
-    await fs.writeFile(dataPath('researchers.json'), JSON.stringify(researchers, null, 2));
+    const filename = `researchers-${owner}-${repo}-${prNumber}.json`;
+    await fs.writeFile(dataPath(filename), JSON.stringify(researchers, null, 2));
 }
 
 // API: Get PR data
 app.get('/api/data', async (req, res) => {
     try {
         const config = await loadConfig();
-        const researchersConfig = await loadResearchers();
-        const assignments = await loadAssignments();
         
         if (!config || !config.repositories || config.repositories.length === 0) {
             return res.status(400).json({ error: 'No repository configured' });
@@ -105,6 +103,8 @@ app.get('/api/data', async (req, res) => {
         }
 
         const repo = config.repositories[prIndex];
+        const researchersConfig = await loadResearchers(repo.owner, repo.repo, repo.pullRequestNumber);
+        const assignments = await loadAssignments();
         const data = await getPRReviewCommentsWithReactions(
             repo.owner,
             repo.repo,
@@ -187,20 +187,28 @@ app.get('/api/data', async (req, res) => {
     }
 });
 
-// API: Get researchers
+// API: Get researchers for active PR
 app.get('/api/researchers', async (req, res) => {
     try {
-        const researchers = await loadResearchers();
+        const { owner, repo, prNumber } = req.query;
+        if (!owner || !repo || !prNumber) {
+            return res.status(400).json({ error: 'Missing PR info' });
+        }
+        const researchers = await loadResearchers(owner, repo, parseInt(prNumber));
         res.json(researchers);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// API: Update researchers
+// API: Update researchers for active PR
 app.post('/api/researchers', async (req, res) => {
     try {
-        await saveResearchers(req.body);
+        const { owner, repo, prNumber, researchers, lsr } = req.body;
+        if (!owner || !repo || !prNumber) {
+            return res.status(400).json({ error: 'Missing PR info' });
+        }
+        await saveResearchers(owner, repo, parseInt(prNumber), { researchers, lsr });
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: error.message });

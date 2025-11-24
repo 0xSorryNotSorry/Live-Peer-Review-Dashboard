@@ -137,9 +137,94 @@ function applyNightModeState() {
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
+    setupFloatingButtons();
     loadAllPRs();
     // Don't start auto-refresh by default (manual mode is selected)
 });
+
+// Setup floating refresh button (draggable) and go-to-top button
+function setupFloatingButtons() {
+    const floatingRefresh = document.getElementById('floatingRefresh');
+    const goToTop = document.getElementById('goToTop');
+    
+    if (!floatingRefresh || !goToTop) return;
+    
+    // Floating refresh button - draggable
+    let isDragging = false;
+    let currentX;
+    let currentY;
+    let initialX;
+    let initialY;
+    let xOffset = 0;
+    let yOffset = 0;
+    
+    floatingRefresh.addEventListener('mousedown', dragStart);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', dragEnd);
+    
+    function dragStart(e) {
+        initialX = e.clientX - xOffset;
+        initialY = e.clientY - yOffset;
+        
+        if (e.target === floatingRefresh) {
+            isDragging = true;
+            floatingRefresh.classList.add('dragging');
+        }
+    }
+    
+    function drag(e) {
+        if (isDragging) {
+            e.preventDefault();
+            currentX = e.clientX - initialX;
+            currentY = e.clientY - initialY;
+            xOffset = currentX;
+            yOffset = currentY;
+            
+            setTranslate(currentX, currentY, floatingRefresh);
+        }
+    }
+    
+    function dragEnd(e) {
+        if (isDragging) {
+            initialX = currentX;
+            initialY = currentY;
+            isDragging = false;
+            floatingRefresh.classList.remove('dragging');
+            
+            // If it was a click (not a drag), refresh
+            if (Math.abs(currentX) < 5 && Math.abs(currentY) < 5) {
+                loadData();
+            }
+        }
+    }
+    
+    function setTranslate(xPos, yPos, el) {
+        el.style.transform = `translate3d(${xPos}px, ${yPos}px, 0)`;
+    }
+    
+    // Click handler for when not dragged
+    floatingRefresh.addEventListener('click', (e) => {
+        if (!isDragging) {
+            loadData();
+        }
+    });
+    
+    // Go to top button - show/hide on scroll
+    window.addEventListener('scroll', () => {
+        if (window.pageYOffset > 300) {
+            goToTop.classList.add('visible');
+        } else {
+            goToTop.classList.remove('visible');
+        }
+    });
+    
+    goToTop.addEventListener('click', () => {
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
+    });
+}
 
 // Load all PRs and render tabs
 async function loadAllPRs() {
@@ -257,7 +342,7 @@ async function saveAllPRs() {
 }
 
 // Switch to a different PR
-function switchToPR(index) {
+async function switchToPR(index) {
     if (index === activePRIndex) return;
     
     activePRIndex = index;
@@ -268,6 +353,16 @@ function switchToPR(index) {
         document.getElementById('prOwner').value = activeRepo.owner;
         document.getElementById('prRepo').value = activeRepo.repo;
         document.getElementById('prNumber').value = activeRepo.pullRequestNumber;
+        
+        // Load researchers for this PR
+        try {
+            const response = await fetch(`/api/researchers?owner=${activeRepo.owner}&repo=${activeRepo.repo}&prNumber=${activeRepo.pullRequestNumber}`);
+            const config = await response.json();
+            researchersConfig = config;
+        } catch (error) {
+            console.error('Error loading researchers:', error);
+            researchersConfig = { researchers: [], lsr: null };
+        }
     }
     
     renderPRTabs();
@@ -1327,7 +1422,13 @@ function updateDuplicateAssignmentsByGroup(groupId, assignedTo) {
 // Researchers management
 async function loadResearchersModal() {
     try {
-        const response = await fetch('/api/researchers');
+        if (allPRs.length === 0) {
+            alert('Please add a PR first');
+            return;
+        }
+        
+        const activePR = allPRs[activePRIndex];
+        const response = await fetch(`/api/researchers?owner=${activePR.owner}&repo=${activePR.repo}&prNumber=${activePR.pullRequestNumber}`);
         const config = await response.json();
         researchersConfig = config;
         renderResearchersList();
@@ -1448,10 +1549,21 @@ async function setLSR(handle) {
 }
 
 async function saveResearchers() {
+    if (allPRs.length === 0) {
+        throw new Error('No active PR');
+    }
+    
+    const activePR = allPRs[activePRIndex];
     const response = await fetch('/api/researchers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(researchersConfig)
+        body: JSON.stringify({
+            owner: activePR.owner,
+            repo: activePR.repo,
+            prNumber: activePR.pullRequestNumber,
+            researchers: researchersConfig.researchers,
+            lsr: researchersConfig.lsr
+        })
     });
     
     const result = await response.json();
