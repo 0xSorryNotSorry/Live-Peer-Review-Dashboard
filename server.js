@@ -13,6 +13,42 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 // In-memory undupe flags (cleared on server restart)
 const undupeFlags = {};
 
+// In-memory cache for PR data
+const prDataCache = new Map();
+const CACHE_TTL = 30 * 1000; // 30 seconds
+
+function getCacheKey(owner, repo, prNumber) {
+    return `${owner}/${repo}#${prNumber}`;
+}
+
+function getCachedData(owner, repo, prNumber) {
+    const key = getCacheKey(owner, repo, prNumber);
+    const cached = prDataCache.get(key);
+    
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        const age = Math.round((Date.now() - cached.timestamp) / 1000);
+        console.log(`📦 Serving cached data for ${key} (age: ${age}s)`);
+        return cached.data;
+    }
+    
+    return null;
+}
+
+function setCachedData(owner, repo, prNumber, data) {
+    const key = getCacheKey(owner, repo, prNumber);
+    prDataCache.set(key, {
+        data: data,
+        timestamp: Date.now()
+    });
+    console.log(`💾 Cached data for ${key}`);
+}
+
+function invalidateCache(owner, repo, prNumber) {
+    const key = getCacheKey(owner, repo, prNumber);
+    prDataCache.delete(key);
+    console.log(`🗑️ Cache invalidated for ${key}`);
+}
+
 // Data directory for configs and app-generated files (defaults to working directory)
 const DATA_DIR = process.env.APP_DATA_DIR ? resolve(process.env.APP_DATA_DIR) : process.cwd();
 function dataPath(filename) {
@@ -103,6 +139,16 @@ app.get('/api/data', async (req, res) => {
         }
 
         const repo = config.repositories[prIndex];
+        const forceRefresh = req.query.force === 'true';
+        
+        // Check cache first (unless force refresh)
+        if (!forceRefresh) {
+            const cached = getCachedData(repo.owner, repo.repo, repo.pullRequestNumber);
+            if (cached) {
+                return res.json(cached);
+            }
+        }
+        
         const researchersConfig = await loadResearchers(repo.owner, repo.repo, repo.pullRequestNumber);
         const assignments = await loadAssignments();
         const data = await getPRReviewCommentsWithReactions(
@@ -167,11 +213,16 @@ app.get('/api/data', async (req, res) => {
             };
         });
 
-        res.json({
+        const responseData = {
             ...data,
             repository: repo,
             researchersConfig
-        });
+        };
+        
+        // Cache the data
+        setCachedData(repo.owner, repo.repo, repo.pullRequestNumber, responseData);
+        
+        res.json(responseData);
     } catch (error) {
         console.error('Error fetching data:', error);
         

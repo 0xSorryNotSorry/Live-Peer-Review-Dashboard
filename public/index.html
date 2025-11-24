@@ -52,6 +52,7 @@
             </div>
             
             <button id="manualRefresh" class="btn btn-secondary">🔄 Refresh Now</button>
+            <button id="forceRefresh" class="btn btn-secondary">⚡ Force Refresh</button>
             <button id="generatePDF" class="btn btn-primary">📄 Generate PDF</button>
             <button id="manageResearchers" class="btn btn-secondary">👥 Manage Researchers</button>
             <button id="toggleNightMode" class="btn btn-secondary">🌙 Night Mode</button>
@@ -198,8 +199,11 @@
     </div>
 
     <!-- Floating Refresh Button (draggable) -->
-    <div id="floatingRefresh" class="floating-refresh" title="Drag to move">
-        🔄
+    <div id="floatingRefresh" class="floating-refresh" title="Click: Refresh (uses cache)
+Shift+Click: Force Refresh (bypasses cache)
+Drag: Move button">
+        <div class="refresh-icon">🔄</div>
+        <div class="refresh-hint">Shift = ⚡</div>
     </div>
 
     <!-- Go to Top Button -->

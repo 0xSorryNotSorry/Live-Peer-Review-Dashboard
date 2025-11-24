@@ -151,8 +151,9 @@ function setupFloatingButtons() {
     
     // Floating refresh button - draggable
     let isDragging = false;
-    let currentX;
-    let currentY;
+    let hasMoved = false;
+    let currentX = 0;
+    let currentY = 0;
     let initialX;
     let initialY;
     let xOffset = 0;
@@ -163,11 +164,11 @@ function setupFloatingButtons() {
     document.addEventListener('mouseup', dragEnd);
     
     function dragStart(e) {
-        initialX = e.clientX - xOffset;
-        initialY = e.clientY - yOffset;
-        
         if (e.target === floatingRefresh) {
+            initialX = e.clientX - xOffset;
+            initialY = e.clientY - yOffset;
             isDragging = true;
+            hasMoved = false;
             floatingRefresh.classList.add('dragging');
         }
     }
@@ -177,6 +178,12 @@ function setupFloatingButtons() {
             e.preventDefault();
             currentX = e.clientX - initialX;
             currentY = e.clientY - initialY;
+            
+            // Mark as moved if dragged more than 5px
+            if (Math.abs(currentX - xOffset) > 5 || Math.abs(currentY - yOffset) > 5) {
+                hasMoved = true;
+            }
+            
             xOffset = currentX;
             yOffset = currentY;
             
@@ -186,14 +193,29 @@ function setupFloatingButtons() {
     
     function dragEnd(e) {
         if (isDragging) {
-            initialX = currentX;
-            initialY = currentY;
             isDragging = false;
             floatingRefresh.classList.remove('dragging');
             
-            // If it was a click (not a drag), refresh
-            if (Math.abs(currentX) < 5 && Math.abs(currentY) < 5) {
-                loadData();
+            // If it was a click (not a drag), trigger refresh
+            if (!hasMoved) {
+                const forceRefresh = e.shiftKey;
+                loadData(forceRefresh);
+                
+                const iconEl = floatingRefresh.querySelector('.refresh-icon');
+                if (iconEl) {
+                    if (forceRefresh) {
+                        iconEl.textContent = '⚡';
+                        setTimeout(() => {
+                            iconEl.textContent = '🔄';
+                        }, 1000);
+                    } else {
+                        // Show spinning animation for regular refresh
+                        iconEl.style.animation = 'spin 1s linear';
+                        setTimeout(() => {
+                            iconEl.style.animation = '';
+                        }, 1000);
+                    }
+                }
             }
         }
     }
@@ -201,13 +223,6 @@ function setupFloatingButtons() {
     function setTranslate(xPos, yPos, el) {
         el.style.transform = `translate3d(${xPos}px, ${yPos}px, 0)`;
     }
-    
-    // Click handler for when not dragged
-    floatingRefresh.addEventListener('click', (e) => {
-        if (!isDragging) {
-            loadData();
-        }
-    });
     
     // Go to top button - show/hide on scroll
     window.addEventListener('scroll', () => {
@@ -561,6 +576,11 @@ function setupEventListeners() {
     document.getElementById('manualRefresh').addEventListener('click', () => {
         loadData();
     });
+    
+    // Force refresh (bypass cache)
+    document.getElementById('forceRefresh').addEventListener('click', () => {
+        loadData(true);
+    });
 
     // Generate PDF
     document.getElementById('generatePDF').addEventListener('click', async () => {
@@ -821,13 +841,14 @@ function stopAutoRefresh() {
     }
 }
 
-async function loadData() {
+async function loadData(forceRefresh = false) {
     try {
         document.getElementById('loading').style.display = 'block';
         document.getElementById('error').style.display = 'none';
         
         // Fetch data for the active PR
-        const response = await fetch(`/api/data?prIndex=${activePRIndex}`);
+        const url = `/api/data?prIndex=${activePRIndex}${forceRefresh ? '&force=true' : ''}`;
+        const response = await fetch(url);
         const data = await response.json();
         
         if (data.error) {

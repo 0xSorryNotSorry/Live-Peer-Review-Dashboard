@@ -922,20 +922,38 @@ body.dark-mode .red-row {
     color: white;
     border-radius: 50%;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    font-size: 28px;
     cursor: move;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     z-index: 1000;
     transition: all 0.3s;
     user-select: none;
+    padding: 5px;
+}
+
+.refresh-icon {
+    font-size: 24px;
+    line-height: 1;
+}
+
+.refresh-hint {
+    font-size: 9px;
+    margin-top: 2px;
+    opacity: 0.8;
+    font-weight: 600;
+    white-space: nowrap;
 }
 
 .floating-refresh:hover {
     background: #0056b3;
     transform: scale(1.1);
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.floating-refresh:hover .refresh-hint {
+    opacity: 1;
 }
 
 .floating-refresh:active {
@@ -990,6 +1008,19 @@ body.dark-mode .floating-refresh {
 
 body.dark-mode .floating-refresh:hover {
     background: #adff2f;
+}
+
+body.dark-mode .refresh-hint {
+    color: #003300;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 body.dark-mode .go-to-top {
