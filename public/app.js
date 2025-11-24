@@ -9,13 +9,277 @@ let isNightMode = false;
 let currentRepoKey = null;
 let allPRs = [];
 let activePRIndex = 0;
+let notifications = [];
+let lastSeenComments = new Set();
 
 const EXTRA_COLUMNS_PREFIX = 'arm-extra-columns:';
 const EXTRA_COLUMN_DATA_PREFIX = 'arm-extra-column-data:';
+const SEEN_COMMENTS_PREFIX = 'arm-seen-comments:';
 
 function escapeAttribute(value) {
     if (value === undefined || value === null) return '';
     return String(value).replace(/"/g, '&quot;');
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function formatTimestamp(isoString) {
+    if (!isoString) return '';
+    const date = new Date(isoString);
+    const now = new Date();
+    const diff = now - date;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return `${days}d ago`;
+}
+
+// Load seen comments from localStorage
+function loadSeenComments() {
+    try {
+        const key = getStorageKey(SEEN_COMMENTS_PREFIX);
+        const data = localStorage.getItem(key);
+        return data ? new Set(JSON.parse(data)) : new Set();
+    } catch (error) {
+        return new Set();
+    }
+}
+
+// Save seen comments to localStorage
+function saveSeenComments() {
+    try {
+        const key = getStorageKey(SEEN_COMMENTS_PREFIX);
+        localStorage.setItem(key, JSON.stringify(Array.from(lastSeenComments)));
+    } catch (error) {
+        console.error('Failed to save seen comments:', error);
+    }
+}
+
+// Check for new comments and update notifications
+function checkForNewComments(rows) {
+    lastSeenComments = loadSeenComments();
+    notifications = [];
+    
+    rows.forEach(row => {
+        // Check for new replies in thread
+        if (row.threadReplies && row.threadReplies.length > 0) {
+            row.threadReplies.forEach(reply => {
+                const commentId = `${row.commentUrl}-reply-${reply.id}`;
+                const isRead = lastSeenComments.has(commentId);
+                
+                notifications.push({
+                    id: commentId,
+                    type: 'comment',
+                    threadUrl: row.commentUrl,
+                    author: reply.author,
+                    body: reply.body,
+                    createdAt: reply.createdAt,
+                    issueNumber: row.issueNumber,
+                    issueTitle: row.Comment.text,
+                    reactions: reply.reactions || [],
+                    read: isRead
+                });
+            });
+        }
+        
+        // Check for new reactions on the main comment
+        if (row.reactions) {
+            Object.keys(row.reactions).forEach(user => {
+                if (row.reactions[user] && user !== row.proposer) {
+                    const reactionId = `${row.commentUrl}-reaction-${user}`;
+                    const isRead = lastSeenComments.has(reactionId);
+                    
+                    // Get the emoji for this user
+                    const emoji = row[user]; // This contains the emoji (👍, 👎, etc.)
+                    
+                    if (emoji && emoji !== 'Proposer') {
+                        notifications.push({
+                            id: reactionId,
+                            type: 'reaction',
+                            threadUrl: row.commentUrl,
+                            author: user,
+                            emoji: emoji,
+                            issueNumber: row.issueNumber,
+                            issueTitle: row.Comment.text,
+                            createdAt: new Date().toISOString(), // Approximate
+                            read: isRead
+                        });
+                    }
+                }
+            });
+        }
+    });
+    
+    // Sort by most recent first
+    notifications.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    
+    updateNotificationBadge();
+}
+
+// Update notification badge count (only unread)
+function updateNotificationBadge() {
+    const badge = document.getElementById('notificationBadge');
+    const unreadCount = notifications.filter(n => !n.read).length;
+    
+    if (unreadCount > 0) {
+        badge.textContent = unreadCount;
+        badge.style.display = 'flex';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+// Render notification panel
+function renderNotificationPanel() {
+    const list = document.getElementById('notificationList');
+    
+    if (notifications.length === 0) {
+        list.innerHTML = '<p class="no-notifications">No new comments</p>';
+        return;
+    }
+    
+    let html = '';
+    notifications.forEach(notif => {
+        const readClass = notif.read ? 'read' : 'unread';
+        html += `<div class="notification-item ${readClass}" data-thread-url="${notif.threadUrl}" data-notif-id="${notif.id}">`;
+        
+        if (notif.type === 'reaction') {
+            // Reaction notification
+            html += `<div class="notification-author">${notif.author} reacted with ${notif.emoji}</div>`;
+            html += `<div class="notification-preview">`;
+            html += `<a href="${notif.threadUrl}" target="_blank" class="notif-link">${escapeHtml(notif.issueTitle.substring(0, 80))}${notif.issueTitle.length > 80 ? '...' : ''}</a>`;
+            html += `</div>`;
+        } else {
+            // Comment notification
+            html += `<div class="notification-author">${notif.author} commented on #${notif.issueNumber}</div>`;
+            html += `<div class="notification-preview">${escapeHtml(notif.body.substring(0, 100))}${notif.body.length > 100 ? '...' : ''}</div>`;
+            
+            // Show reactions if any
+            if (notif.reactions && notif.reactions.length > 0) {
+                html += `<div class="notification-reactions">`;
+                notif.reactions.forEach(r => {
+                    html += `<span class="reaction-mini">${r.content}</span>`;
+                });
+                html += `</div>`;
+            }
+        }
+        
+        html += `<div class="comment-time">${formatTimestamp(notif.createdAt)}</div>`;
+        html += `</div>`;
+    });
+    
+    list.innerHTML = html;
+    
+    // Add click handlers
+    document.querySelectorAll('.notification-item').forEach(item => {
+        item.addEventListener('click', function(e) {
+            // Don't trigger if clicking the link
+            if (e.target.classList.contains('notif-link')) {
+                return;
+            }
+            
+            const threadUrl = this.dataset.threadUrl;
+            const notifId = this.dataset.notifId;
+            scrollToComment(threadUrl);
+            markSingleNotificationAsRead(notifId);
+        });
+    });
+}
+
+// Scroll to comment and expand thread
+function scrollToComment(threadUrl) {
+    const threadId = `thread-${encodeURIComponent(threadUrl)}`;
+    const threadView = document.getElementById(threadId);
+    
+    if (threadView) {
+        // Find the row containing this thread
+        const row = threadView.closest('tr');
+        if (row) {
+            // Scroll to row
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            // Highlight row briefly
+            row.style.background = '#fff3cd';
+            setTimeout(() => {
+                row.style.background = '';
+            }, 2000);
+            
+            // Expand thread if collapsed
+            if (threadView.style.display === 'none') {
+                const button = document.querySelector(`[data-thread-id="${threadId}"]`);
+                if (button) {
+                    button.click();
+                }
+            }
+        }
+    }
+    
+    // Close notification panel
+    document.getElementById('notificationPanel').style.display = 'none';
+}
+
+// Mark a single notification as read
+function markSingleNotificationAsRead(notifId) {
+    const notif = notifications.find(n => n.id === notifId);
+    if (notif && !notif.read) {
+        notif.read = true;
+        lastSeenComments.add(notif.id);
+        saveSeenComments();
+        updateNotificationBadge();
+        renderNotificationPanel();
+    }
+}
+
+// Mark all notifications for a thread as read (but keep in list)
+function markNotificationAsRead(threadUrl) {
+    let badgeCountChanged = false;
+    
+    notifications.forEach(n => {
+        if (n.threadUrl === threadUrl && !n.read) {
+            n.read = true;
+            lastSeenComments.add(n.id);
+            badgeCountChanged = true;
+        }
+    });
+    
+    if (badgeCountChanged) {
+        saveSeenComments();
+        updateNotificationBadge();
+        renderNotificationPanel();
+    }
+}
+
+// Mark all notifications as read
+function markAllNotificationsRead() {
+    notifications.forEach(n => {
+        n.read = true;
+        lastSeenComments.add(n.id);
+    });
+    
+    saveSeenComments();
+    updateNotificationBadge();
+    renderNotificationPanel();
+}
+
+// Mark all notifications as unread
+function markAllNotificationsUnread() {
+    notifications.forEach(n => {
+        n.read = false;
+        lastSeenComments.delete(n.id);
+    });
+    
+    saveSeenComments();
+    updateNotificationBadge();
+    renderNotificationPanel();
 }
 
 function getRowKey(row) {
@@ -164,7 +428,7 @@ function setupFloatingButtons() {
     document.addEventListener('mouseup', dragEnd);
     
     function dragStart(e) {
-        if (e.target === floatingRefresh) {
+        if (e.target === floatingRefresh || floatingRefresh.contains(e.target)) {
             initialX = e.clientX - xOffset;
             initialY = e.clientY - yOffset;
             isDragging = true;
@@ -238,6 +502,52 @@ function setupFloatingButtons() {
             top: 0,
             behavior: 'smooth'
         });
+    });
+    
+    // Notification button and panel
+    const notificationBtn = document.getElementById('notificationBtn');
+    const notificationPanel = document.getElementById('notificationPanel');
+    const closePanel = notificationPanel.querySelector('.close-panel');
+    
+    if (notificationBtn) {
+        notificationBtn.addEventListener('click', () => {
+            const isVisible = notificationPanel.style.display === 'block';
+            notificationPanel.style.display = isVisible ? 'none' : 'block';
+            if (!isVisible) {
+                renderNotificationPanel();
+            }
+        });
+    }
+    
+    if (closePanel) {
+        closePanel.addEventListener('click', () => {
+            notificationPanel.style.display = 'none';
+        });
+    }
+    
+    // Mark all read button
+    const markAllReadBtn = document.getElementById('markAllRead');
+    if (markAllReadBtn) {
+        markAllReadBtn.addEventListener('click', () => {
+            markAllNotificationsRead();
+        });
+    }
+    
+    // Mark all unread button
+    const markAllUnreadBtn = document.getElementById('markAllUnread');
+    if (markAllUnreadBtn) {
+        markAllUnreadBtn.addEventListener('click', () => {
+            markAllNotificationsUnread();
+        });
+    }
+    
+    // Close panel when clicking outside
+    document.addEventListener('click', (e) => {
+        if (notificationPanel.style.display === 'block' && 
+            !notificationPanel.contains(e.target) && 
+            e.target !== notificationBtn) {
+            notificationPanel.style.display = 'none';
+        }
     });
 }
 
@@ -872,6 +1182,10 @@ function renderData(data) {
     setRepositoryContext(data.repository);
     latestRows = data.rows || [];
     latestCommenters = data.commenters || [];
+    
+    // Check for new comments and update notifications
+    checkForNewComments(latestRows);
+    
     renderRepoInfo(data.repository);
     renderResearchersSection(data.researchersConfig, data.commenters);
     renderProgressCharts(latestRows, data.duplicateGroups, latestCommenters);
@@ -1142,8 +1456,75 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId) {
     // Issue number
     html += `<td><strong>${row.issueNumber}</strong></td>`;
     
-    // Comment
-    html += `<td><a href="${row.Comment.hyperlink}" target="_blank">${row.Comment.text}</a></td>`;
+    // Comment with thread view
+    const hasReplies = row.replyCount > 0;
+    const threadId = `thread-${encodeURIComponent(row.commentUrl)}`;
+    
+    html += `<td class="comment-cell">`;
+    
+    // Main comment with expand button if there are replies
+    if (hasReplies) {
+        html += `<div class="comment-header">`;
+        html += `<button class="thread-toggle" data-thread-id="${threadId}">▶ ${row.replyCount} ${row.replyCount === 1 ? 'reply' : 'replies'}</button>`;
+        html += `<a href="${row.Comment.hyperlink}" target="_blank">${row.Comment.text}</a>`;
+        html += `</div>`;
+        
+        // Thread view (collapsed by default)
+        html += `<div class="thread-view" id="${threadId}" style="display: none;">`;
+        
+        // Original comment
+        html += `<div class="thread-comment original">`;
+        html += `<div class="comment-author">${row.proposer}</div>`;
+        html += `<div class="comment-body">${escapeHtml(row.Comment.fullText || row.Comment.text)}</div>`;
+        
+        // Show reactions on original comment
+        const originalReactions = [];
+        commenters.forEach(commenter => {
+            const emoji = row[commenter];
+            if (emoji && emoji !== 'Proposer' && commenter !== row.proposer) {
+                originalReactions.push({ emoji, user: commenter });
+            }
+        });
+        
+        if (originalReactions.length > 0) {
+            html += `<div class="comment-reactions">`;
+            originalReactions.forEach(r => {
+                html += `<span class="reaction">${r.emoji} ${r.user}</span>`;
+            });
+            html += `</div>`;
+        }
+        
+        html += `</div>`;
+        
+        // Replies
+        if (row.threadReplies) {
+            row.threadReplies.forEach(reply => {
+                html += `<div class="thread-comment reply">`;
+                html += `<div class="comment-meta">`;
+                html += `<span class="comment-author">${reply.author}</span>`;
+                html += `<span class="comment-time">${formatTimestamp(reply.createdAt)}</span>`;
+                html += `</div>`;
+                html += `<div class="comment-body">${escapeHtml(reply.body)}</div>`;
+                
+                // Show reactions if any
+                if (reply.reactions && reply.reactions.length > 0) {
+                    html += `<div class="comment-reactions">`;
+                    reply.reactions.forEach(r => {
+                        html += `<span class="reaction">${r.content} ${r.user}</span>`;
+                    });
+                    html += `</div>`;
+                }
+                
+                html += `</div>`;
+            });
+        }
+        
+        html += `</div>`;
+    } else {
+        html += `<a href="${row.Comment.hyperlink}" target="_blank">${row.Comment.text}</a>`;
+    }
+    
+    html += `</td>`;
     
     // Reported
     html += `<td>${row.Reported || ''}</td>`;
@@ -1194,6 +1575,21 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId) {
     
     html += '</tr>';
     return html;
+}
+
+function toggleThread(threadId, button) {
+    const threadView = document.getElementById(threadId);
+    if (!threadView) return;
+    
+    const isCollapsed = threadView.style.display === 'none';
+    
+    if (isCollapsed) {
+        threadView.style.display = 'block';
+        button.textContent = button.textContent.replace('▶', '▼');
+    } else {
+        threadView.style.display = 'none';
+        button.textContent = button.textContent.replace('▼', '▶');
+    }
 }
 
 function toggleDuplicateGroup(groupId) {
@@ -1311,6 +1707,16 @@ function renderCommentsTable(rows, commenters) {
         header.addEventListener('click', function() {
             const groupId = this.dataset.headerFor;
             toggleDuplicateGroup(groupId);
+        });
+    });
+    
+    // Thread toggle buttons
+    document.querySelectorAll('.thread-toggle').forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const threadId = this.dataset.threadId;
+            toggleThread(threadId, this);
         });
     });
     
