@@ -3,6 +3,15 @@ import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import fs from 'fs/promises';
 import { getPRReviewCommentsWithReactions, generatePDF } from './dataFetcher.js';
+import { Octokit } from "@octokit/rest";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+// Initialize Octokit for posting comments
+const octokit = new Octokit({
+    auth: process.env.GITHUB_TOKEN
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -417,6 +426,67 @@ app.put('/api/prs/update-all', async (req, res) => {
         res.json({ success: true });
     } catch (error) {
         console.error('Error updating PRs:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// API: Post comment to GitHub (for LSR assignments)
+app.post('/api/post-comment', async (req, res) => {
+    try {
+        const { owner, repo, prNumber, commentUrl, body } = req.body;
+        
+        if (!owner || !repo || !prNumber || !commentUrl || !body) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+        
+        // Extract comment ID from URL (e.g., #discussion_r123456)
+        const match = commentUrl.match(/discussion_r(\d+)/);
+        if (!match) {
+            return res.status(400).json({ error: 'Invalid comment URL' });
+        }
+        
+        const commentId = parseInt(match[1]);
+        
+        // Post reply to the comment
+        const response = await octokit.rest.pulls.createReplyForReviewComment({
+            owner,
+            repo,
+            pull_number: prNumber,
+            comment_id: commentId,
+            body
+        });
+        
+        console.log(`✅ Posted LSR assignment comment to ${owner}/${repo}#${prNumber}`);
+        res.json({ success: true, commentId: response.data.id });
+    } catch (error) {
+        console.error('Error posting comment:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// API: Delete comment from GitHub
+app.post('/api/delete-comment', async (req, res) => {
+    try {
+        const { owner, repo, prNumber, commentId } = req.body;
+        
+        console.log('Delete comment request:', { owner, repo, prNumber, commentId });
+        
+        if (!owner || !repo || !prNumber || !commentId) {
+            console.error('Missing fields:', { owner, repo, prNumber, commentId });
+            return res.status(400).json({ error: 'Missing required fields', received: { owner, repo, prNumber, commentId } });
+        }
+        
+        // Delete the comment
+        await octokit.rest.pulls.deleteReviewComment({
+            owner,
+            repo,
+            comment_id: commentId
+        });
+        
+        console.log(`🗑️ Deleted comment ${commentId} from ${owner}/${repo}#${prNumber}`);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error deleting comment:', error);
         res.status(500).json({ error: error.message });
     }
 });

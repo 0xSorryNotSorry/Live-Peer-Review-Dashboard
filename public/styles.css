@@ -600,8 +600,14 @@ tr:hover {
     background: #f8f9fa;
 }
 
+.assigned-to-cell {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
 .assigned-to-input {
-    width: 100%;
+    flex: 1;
     padding: 4px 8px;
     border: 1px solid #ddd;
     border-radius: 3px;
@@ -611,6 +617,72 @@ tr:hover {
 .assigned-to-input:focus {
     outline: none;
     border-color: #007bff;
+}
+
+.lsr-assign-btn {
+    padding: 4px 8px;
+    background: #ffd700;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.lsr-assign-btn:hover {
+    background: #ffc107;
+    transform: scale(1.1);
+}
+
+body.dark-mode .lsr-assign-btn {
+    background: #ffd700;
+    color: #000;
+}
+
+body.dark-mode .lsr-assign-btn:hover {
+    background: #ffc107;
+}
+
+.lsr-assignment {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    background: #fff3cd;
+    border-radius: 4px;
+    border: 1px solid #ffc107;
+}
+
+.lsr-text {
+    flex: 1;
+    font-size: 12px;
+    color: #856404;
+    font-weight: 500;
+}
+
+.lsr-edit-btn,
+.lsr-remove-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 4px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.lsr-edit-btn:hover,
+.lsr-remove-btn:hover {
+    opacity: 1;
+}
+
+body.dark-mode .lsr-assignment {
+    background: rgba(255, 193, 7, 0.2);
+    border-color: #ffc107;
+}
+
+body.dark-mode .lsr-text {
+    color: #ffc107;
 }
 
 .extra-column-input {
@@ -707,6 +779,22 @@ tr:hover {
 
 .percentage-very-low {
     background: #ffcccc;
+}
+
+body.dark-mode .percentage-high {
+    background: rgba(0, 255, 106, 0.2);
+}
+
+body.dark-mode .percentage-medium {
+    background: rgba(255, 255, 0, 0.2);
+}
+
+body.dark-mode .percentage-low {
+    background: rgba(255, 193, 7, 0.2);
+}
+
+body.dark-mode .percentage-very-low {
+    background: rgba(255, 0, 0, 0.2);
 }
 
 a {
@@ -1427,6 +1515,80 @@ body.dark-mode .reaction-mini {
 
 body.dark-mode .no-notifications {
     color: #9ca3af;
+}
+
+/* LSR Assignment Modal */
+.lsr-assignment-form {
+    padding: 20px 0;
+}
+
+.lsr-assignment-form h3 {
+    margin-bottom: 12px;
+    color: #2c3e50;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.sr-checkboxes {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.sr-checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 4px;
+}
+
+.sr-checkbox-item input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.sr-checkbox-item label {
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.lsr-guidance {
+    width: 100%;
+    min-height: 100px;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+}
+
+.lsr-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+body.dark-mode .lsr-assignment-form h3 {
+    color: #e5e7eb;
+}
+
+body.dark-mode .sr-checkbox-item {
+    background: #374151;
+}
+
+body.dark-mode .sr-checkbox-item label {
+    color: #e5e7eb;
+}
+
+body.dark-mode .lsr-guidance {
+    background: #374151;
+    border-color: #4b5563;
+    color: #e5e7eb;
 }
 
 body.dark-mode .duplicate-group-header {

@@ -11,6 +11,7 @@ let allPRs = [];
 let activePRIndex = 0;
 let notifications = [];
 let lastSeenComments = new Set();
+let currentLSRAssignment = null; // Stores {groupNumber, primaryCommentUrl}
 
 const EXTRA_COLUMNS_PREFIX = 'arm-extra-columns:';
 const EXTRA_COLUMN_DATA_PREFIX = 'arm-extra-column-data:';
@@ -656,6 +657,29 @@ function setupFloatingButtons() {
             notificationPanel.style.display = 'none';
         }
     });
+    
+    // LSR Assignment Modal
+    const lsrModal = document.getElementById('lsrAssignmentModal');
+    if (lsrModal) {
+        const closeBtn = lsrModal.querySelector('.close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                lsrModal.style.display = 'none';
+            });
+        }
+        
+        const submitBtn = document.getElementById('submitLSRAssignment');
+        if (submitBtn) {
+            submitBtn.addEventListener('click', submitLSRAssignment);
+        }
+        
+        const cancelBtn = document.getElementById('cancelLSRAssignment');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                lsrModal.style.display = 'none';
+            });
+        }
+    }
 }
 
 // Load all PRs and render tabs
@@ -1369,10 +1393,18 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
             reviewedCount++;
         }
         
-        // Check if ANY row in this issue/group is reported (has rocket emoji)
-        // Only green rows (approved) will be reported
+        // Check if ANY row in this issue/group is reported (has rocket emoji AND is green)
+        // Only count if the issue has majority thumbs up (green row) AND has rocket
         const hasReported = issueRows.some(row => {
-            return row.Reported === '✅';
+            const totalCommenters = commenters.length;
+            const thumbsUpCount = row.thumbsUpCount || 0;
+            
+            // Must be green (majority thumbs up) AND have rocket emoji
+            const isGreen = (thumbsUpCount + 1) >= Math.ceil((2 / 3) * totalCommenters);
+            const hasRocket = row.Reported === '✅';
+            
+            const result = isGreen && hasRocket;
+            return result;
         });
         
         if (hasReported) {
@@ -1383,6 +1415,9 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
     // Calculate percentages
     const reviewPercentage = totalIssues > 0 ? Math.round((reviewedCount / totalIssues) * 100) : 0;
     const reportPercentage = totalIssues > 0 ? Math.round((reportedCount / totalIssues) * 100) : 0;
+    
+    console.log(`📊 Progress: Total=${totalIssues}, Reviewed=${reviewedCount} (${reviewPercentage}%), Reported=${reportedCount} (${reportPercentage}%)`);
+    console.log(`📊 Unique issues breakdown:`, Array.from(uniqueIssues.keys()));
     
     // Update pie charts
     updatePieChart('reviewProgress', 'reviewPercentage', reviewPercentage, '#28a745');
@@ -1540,7 +1575,7 @@ function renderDuplicateAssignments(assignments, commenters) {
     document.getElementById('duplicateAssignments').innerHTML = html;
 }
 
-function renderTableRow(row, commenters, isInDuplicateGroup, groupId) {
+function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
     const thumbsUpCount = row.thumbsUpCount;
     const thumbsDownCount = row.thumbsDownCount;
     const totalCommenters = commenters.length;
@@ -1658,7 +1693,43 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId) {
         html += `<td></td>`;
     }
     
-    const assignedTo = row.assignedTo || '';
+    // Check for LSR assignment in thread replies
+    // For duplicates, check the primary comment (D-X.1) in the group
+    let lsrAssignment = null;
+    
+    if (row.isDuplicate && row.groupNumber) {
+        // Find the primary comment (D-X.1) in this group
+        const primaryIssueNumber = `${row.groupNumber}.1`;
+        const primaryRow = allRows.find(r => r.issueNumber === primaryIssueNumber);
+        
+        if (primaryRow && primaryRow.threadReplies && primaryRow.threadReplies.length > 0) {
+            const lsrComment = primaryRow.threadReplies.find(r => 
+                r.body && r.body.startsWith('PIC of reporting:')
+            );
+            if (lsrComment) {
+                lsrAssignment = {
+                    body: lsrComment.body,
+                    author: lsrComment.author,
+                    id: lsrComment.numericId || lsrComment.id,
+                    primaryCommentUrl: primaryRow.commentUrl
+                };
+            }
+        }
+    } else if (row.threadReplies && row.threadReplies.length > 0) {
+        // For non-duplicates, check their own thread
+        const lsrComment = row.threadReplies.find(r => 
+            r.body && r.body.startsWith('PIC of reporting:')
+        );
+        if (lsrComment) {
+            lsrAssignment = {
+                body: lsrComment.body,
+                author: lsrComment.author,
+                id: lsrComment.numericId || lsrComment.id
+            };
+        }
+    }
+    
+    const assignedTo = lsrAssignment ? lsrAssignment.body : (row.assignedTo || '');
     const rowKey = getRowKey(row);
     const encodedRowKey = encodeURIComponent(rowKey);
     const assignedToValue = escapeAttribute(assignedTo);
@@ -1670,7 +1741,34 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId) {
         dataAttrs += ` data-duplicate-group="${groupIdAttr}" data-is-duplicate="true"`;
     }
     
-    html += `<td><input type="text" class="assigned-to-input" ${dataAttrs} value="${assignedToValue}" placeholder="Assign to..."></td>`;
+    html += `<td class="assigned-to-cell">`;
+    
+    if (lsrAssignment) {
+        // Show LSR assignment (read-only, with hover for full text)
+        const shortText = lsrAssignment.body.split('\n')[0]; // First line only
+        html += `<div class="lsr-assignment" title="${escapeAttribute(lsrAssignment.body)}">`;
+        html += `<span class="lsr-text">${escapeHtml(shortText)}</span>`;
+        
+        // Edit/Remove buttons (only for LSR)
+        if (researchersConfig.lsr) {
+            html += `<button class="lsr-edit-btn" data-group="${row.groupNumber}" data-comment-url="${row.commentUrl}" data-comment-id="${lsrAssignment.id}" title="Edit assignment">✏️</button>`;
+            html += `<button class="lsr-remove-btn" data-comment-id="${lsrAssignment.id}" title="Remove assignment">🗑️</button>`;
+        }
+        
+        html += `</div>`;
+    } else {
+        html += `<input type="text" class="assigned-to-input" ${dataAttrs} value="${assignedToValue}" placeholder="Assign to...">`;
+        
+        // Add LSR assignment button for duplicate groups (only if user is LSR)
+        if (row.isDuplicate && row.groupNumber && researchersConfig.lsr) {
+            const isFirstInGroup = row.issueNumber.endsWith('.1');
+            if (isFirstInGroup) {
+                html += `<button class="lsr-assign-btn" data-group="${row.groupNumber}" data-comment-url="${row.commentUrl}" title="Assign PIC of Reporting (LSR only)">👑</button>`;
+            }
+        }
+    }
+    
+    html += `</td>`;
     
     commenters.forEach(commenter => {
         const value = row[commenter];
@@ -1803,13 +1901,13 @@ function renderCommentsTable(rows, commenters) {
         
         // Group rows (collapsible) - these have data-group-id
         groupRows.forEach(row => {
-            bodyHtml += renderTableRow(row, commenters, true, groupId);
+            bodyHtml += renderTableRow(row, commenters, true, groupId, rows);
         });
     });
     
     // Render regular (non-duplicate) rows after duplicates
     regularRows.forEach(row => {
-        bodyHtml += renderTableRow(row, commenters, false, null);
+        bodyHtml += renderTableRow(row, commenters, false, null, rows);
     });
     
     document.getElementById('commentsTableBody').innerHTML = bodyHtml;
@@ -1829,6 +1927,47 @@ function renderCommentsTable(rows, commenters) {
             e.stopPropagation();
             const threadId = this.dataset.threadId;
             toggleThread(threadId, this);
+        });
+    });
+    
+    // LSR assignment buttons
+    document.querySelectorAll('.lsr-assign-btn').forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const groupNumber = this.dataset.group;
+            const commentUrl = this.dataset.commentUrl;
+            openLSRAssignmentModal(groupNumber, commentUrl);
+        });
+    });
+    
+    // LSR edit buttons
+    document.querySelectorAll('.lsr-edit-btn').forEach(button => {
+        button.addEventListener('click', async function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const commentId = this.dataset.commentId;
+            const groupNumber = this.dataset.group;
+            const commentUrl = this.dataset.commentUrl;
+            
+            // Delete old comment first
+            if (await deleteLSRComment(commentId)) {
+                // Open modal to create new assignment
+                openLSRAssignmentModal(groupNumber, commentUrl);
+            }
+        });
+    });
+    
+    // LSR remove buttons
+    document.querySelectorAll('.lsr-remove-btn').forEach(button => {
+        button.addEventListener('click', async function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const commentId = this.dataset.commentId;
+            
+            if (confirm('Remove this PIC assignment?')) {
+                await deleteLSRComment(commentId);
+            }
         });
     });
     
@@ -1956,6 +2095,114 @@ function updateDuplicateAssignmentsByGroup(groupId, assignedTo) {
     document.querySelectorAll(`.assigned-to-input[data-duplicate-group="${groupId}"]`).forEach(input => {
         input.value = assignedTo;
     });
+}
+
+// LSR Assignment System
+function openLSRAssignmentModal(groupNumber, primaryCommentUrl) {
+    currentLSRAssignment = { groupNumber, primaryCommentUrl };
+    
+    const modal = document.getElementById('lsrAssignmentModal');
+    const checkboxesContainer = document.getElementById('srCheckboxes');
+    
+    // Render SR checkboxes
+    let html = '';
+    researchersConfig.researchers.forEach(researcher => {
+        html += `<div class="sr-checkbox-item">`;
+        html += `<input type="checkbox" id="sr-${researcher.handle}" value="${researcher.handle}">`;
+        html += `<label for="sr-${researcher.handle}">${researcher.handle}${researcher.handle === researchersConfig.lsr ? ' ⭐' : ''}</label>`;
+        html += `</div>`;
+    });
+    
+    checkboxesContainer.innerHTML = html;
+    
+    // Clear guidance field
+    document.getElementById('lsrGuidance').value = '';
+    
+    modal.style.display = 'block';
+}
+
+async function deleteLSRComment(commentId) {
+    try {
+        const activePR = allPRs[activePRIndex];
+        const response = await fetch('/api/delete-comment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                owner: activePR.owner,
+                repo: activePR.repo,
+                prNumber: activePR.pullRequestNumber,
+                commentId: parseInt(commentId)
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert('✅ Assignment removed!');
+            loadData(true); // Force refresh to show changes
+            return true;
+        } else {
+            alert('❌ Failed to remove assignment: ' + (result.error || 'Unknown error'));
+            return false;
+        }
+    } catch (error) {
+        alert('❌ Error removing assignment: ' + error.message);
+        return false;
+    }
+}
+
+async function submitLSRAssignment() {
+    if (!currentLSRAssignment) return;
+    
+    // Get selected SRs
+    const selectedSRs = [];
+    researchersConfig.researchers.forEach(researcher => {
+        const checkbox = document.getElementById(`sr-${researcher.handle}`);
+        if (checkbox && checkbox.checked) {
+            selectedSRs.push(researcher.handle);
+        }
+    });
+    
+    if (selectedSRs.length === 0) {
+        alert('Please select at least one SR');
+        return;
+    }
+    
+    const guidance = document.getElementById('lsrGuidance').value.trim();
+    
+    // Build comment body
+    let commentBody = `PIC of reporting: ${selectedSRs.join(', ')}`;
+    if (guidance) {
+        commentBody += `\n\n${guidance}`;
+    }
+    
+    try {
+        const activePR = allPRs[activePRIndex];
+        const response = await fetch('/api/post-comment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                owner: activePR.owner,
+                repo: activePR.repo,
+                prNumber: activePR.pullRequestNumber,
+                commentUrl: currentLSRAssignment.primaryCommentUrl,
+                body: commentBody
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert('✅ Assignment posted to GitHub!');
+            document.getElementById('lsrAssignmentModal').style.display = 'none';
+            // Refresh to show the new comment
+            loadData(true);
+        } else {
+            alert('❌ Failed to post assignment: ' + (result.error || 'Unknown error'));
+        }
+    } catch (error) {
+        alert('❌ Error posting assignment: ' + error.message);
+    }
 }
 
 // Researchers management
