@@ -1320,7 +1320,7 @@ function renderData(data) {
     renderRepoInfo(data.repository);
     renderResearchersSection(data.researchersConfig, data.commenters);
     renderProgressCharts(latestRows, data.duplicateGroups, latestCommenters);
-    renderStats(data.stats, data.duplicateGroups);
+    renderStats(data.stats, data.duplicateGroups, latestRows, latestCommenters);
     renderReactionStats(data.reactionStats, data.commenters);
     renderDuplicateGroups(data.duplicateGroups);
     // Hide duplicate assignments section per request
@@ -1494,10 +1494,50 @@ function renderResearchersSection(config, commenters) {
     section.innerHTML = html;
 }
 
-function renderStats(stats, duplicateGroups) {
-    document.getElementById('reportedCount').textContent = stats.reported;
-    document.getElementById('nonReportedCount').textContent = stats.nonReported;
-    document.getElementById('pendingCount').textContent = stats.pending;
+function renderStats(stats, duplicateGroups, rows, commenters) {
+    // Recalculate stats including duplicate groups
+    const uniqueIssues = new Map();
+    
+    rows.forEach(row => {
+        if (row.isDuplicate && row.groupNumber) {
+            if (!uniqueIssues.has(row.groupNumber)) {
+                uniqueIssues.set(row.groupNumber, { rows: [], isGroup: true });
+            }
+            uniqueIssues.get(row.groupNumber).rows.push(row);
+        } else if (!row.isDuplicate) {
+            uniqueIssues.set(row.commentUrl || row.Comment?.hyperlink, { rows: [row], isGroup: false });
+        }
+    });
+    
+    let reported = 0;
+    let nonReported = 0;
+    let pending = 0;
+    
+    uniqueIssues.forEach((issue) => {
+        const issueRows = issue.rows;
+        const anyResolved = issueRows.some(r => r.isResolved);
+        const anyHasRocket = issueRows.some(r => r.Reported === '✅');
+        
+        if (anyResolved) {
+            const totalCommenters = commenters.length;
+            const anyGreen = issueRows.some(r => {
+                const thumbsUpCount = r.thumbsUpCount || 0;
+                return (thumbsUpCount + 1) >= Math.ceil((2 / 3) * totalCommenters);
+            });
+            
+            if (anyGreen && anyHasRocket) {
+                reported++;
+            } else {
+                nonReported++;
+            }
+        } else {
+            pending++;
+        }
+    });
+    
+    document.getElementById('reportedCount').textContent = reported;
+    document.getElementById('nonReportedCount').textContent = nonReported;
+    document.getElementById('pendingCount').textContent = pending;
     document.getElementById('duplicatesCount').textContent = duplicateGroups.length;
 }
 
