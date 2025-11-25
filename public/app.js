@@ -1366,6 +1366,7 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
     
     const totalIssues = uniqueIssues.size;
     let reviewedCount = 0;
+    let greenIssuesCount = 0; // Count of issues worth reporting (green rows)
     let reportedCount = 0;
     
     // Calculate review and report progress
@@ -1393,6 +1394,18 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
             reviewedCount++;
         }
         
+        // Check if issue is green (worth reporting)
+        const isGreenIssue = issueRows.some(row => {
+            const totalCommenters = commenters.length;
+            const thumbsUpCount = row.thumbsUpCount || 0;
+            const isGreen = (thumbsUpCount + 1) >= Math.ceil((2 / 3) * totalCommenters);
+            return isGreen;
+        });
+        
+        if (isGreenIssue) {
+            greenIssuesCount++;
+        }
+        
         // Check if ANY row in this issue/group is reported (has rocket emoji AND is green)
         // Only count if the issue has majority thumbs up (green row) AND has rocket
         const hasReported = issueRows.some(row => {
@@ -1403,8 +1416,7 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
             const isGreen = (thumbsUpCount + 1) >= Math.ceil((2 / 3) * totalCommenters);
             const hasRocket = row.Reported === '✅';
             
-            const result = isGreen && hasRocket;
-            return result;
+            return isGreen && hasRocket;
         });
         
         if (hasReported) {
@@ -1414,10 +1426,10 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
     
     // Calculate percentages
     const reviewPercentage = totalIssues > 0 ? Math.round((reviewedCount / totalIssues) * 100) : 0;
-    const reportPercentage = totalIssues > 0 ? Math.round((reportedCount / totalIssues) * 100) : 0;
+    // Reporting percentage: reported / green issues (not all issues)
+    const reportPercentage = greenIssuesCount > 0 ? Math.round((reportedCount / greenIssuesCount) * 100) : 0;
     
-    console.log(`📊 Progress: Total=${totalIssues}, Reviewed=${reviewedCount} (${reviewPercentage}%), Reported=${reportedCount} (${reportPercentage}%)`);
-    console.log(`📊 Unique issues breakdown:`, Array.from(uniqueIssues.keys()));
+    console.log(`📊 Progress: Total=${totalIssues}, Reviewed=${reviewedCount} (${reviewPercentage}%), Green=${greenIssuesCount}, Reported=${reportedCount}/${greenIssuesCount} (${reportPercentage}%)`);
     
     // Update pie charts
     updatePieChart('reviewProgress', 'reviewPercentage', reviewPercentage, '#28a745');
@@ -1427,7 +1439,7 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
     document.getElementById('reviewCompleted').textContent = reviewedCount;
     document.getElementById('reviewTotal').textContent = totalIssues;
     document.getElementById('reportCompleted').textContent = reportedCount;
-    document.getElementById('reportTotal').textContent = totalIssues;
+    document.getElementById('reportTotal').textContent = greenIssuesCount; // Show green issues, not total
 }
 
 function updatePieChart(progressId, percentageId, percentage, color) {
