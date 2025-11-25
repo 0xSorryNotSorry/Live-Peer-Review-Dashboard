@@ -556,6 +556,23 @@ th, td {
     text-align: left;
 }
 
+/* Resolved badge */
+.resolved-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 2px 6px;
+    background: #28a745;
+    color: white;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: bold;
+}
+
+body.dark-mode .resolved-badge {
+    background: #00ff6a;
+    color: #003300;
+}
+
 .table-actions {
     display: flex;
     justify-content: flex-end;

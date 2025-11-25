@@ -15,6 +15,7 @@ let lastSeenComments = new Set();
 const EXTRA_COLUMNS_PREFIX = 'arm-extra-columns:';
 const EXTRA_COLUMN_DATA_PREFIX = 'arm-extra-column-data:';
 const SEEN_COMMENTS_PREFIX = 'arm-seen-comments:';
+const RESOLUTION_STATES_PREFIX = 'arm-resolution-states:';
 
 function escapeAttribute(value) {
     if (value === undefined || value === null) return '';
@@ -64,12 +65,74 @@ function saveSeenComments() {
     }
 }
 
+// Load resolution states from localStorage
+function loadResolutionStates() {
+    try {
+        const key = getStorageKey(RESOLUTION_STATES_PREFIX);
+        const data = localStorage.getItem(key);
+        if (data) {
+            const obj = JSON.parse(data);
+            return new Map(Object.entries(obj));
+        }
+    } catch (error) {
+        console.error('Failed to load resolution states:', error);
+    }
+    return new Map();
+}
+
+// Save resolution states to localStorage
+function saveResolutionStates(statesMap) {
+    try {
+        const key = getStorageKey(RESOLUTION_STATES_PREFIX);
+        const obj = Object.fromEntries(statesMap);
+        localStorage.setItem(key, JSON.stringify(obj));
+    } catch (error) {
+        console.error('Failed to save resolution states:', error);
+    }
+}
+
 // Check for new comments and update notifications
 function checkForNewComments(rows) {
     lastSeenComments = loadSeenComments();
+    const previousResolutionStates = loadResolutionStates();
+    const currentResolutionStates = new Map();
     notifications = [];
     
     rows.forEach(row => {
+        // Track current resolution state
+        currentResolutionStates.set(row.commentUrl, row.isResolved);
+        
+        // Check for resolution changes
+        const wasResolved = previousResolutionStates.get(row.commentUrl);
+        if (row.isResolved && wasResolved === false) {
+            // Thread was just resolved - find who resolved it
+            const resolutionId = `${row.commentUrl}-resolved`;
+            const isRead = lastSeenComments.has(resolutionId);
+            
+            // Try to find who resolved it from thread comments
+            let resolver = null;
+            if (row.threadReplies && row.threadReplies.length > 0) {
+                // Look for "marked this conversation as resolved" message
+                const resolutionComment = row.threadReplies.find(r => 
+                    r.body && r.body.includes('marked this conversation as resolved')
+                );
+                if (resolutionComment) {
+                    resolver = resolutionComment.author;
+                }
+            }
+            
+            notifications.push({
+                id: resolutionId,
+                type: 'resolution',
+                threadUrl: row.commentUrl,
+                issueNumber: row.issueNumber,
+                issueTitle: row.Comment.text,
+                resolver: resolver,
+                createdAt: new Date().toISOString(), // Use NOW since we just detected the resolution
+                read: isRead
+            });
+        }
+        
         // Check for new replies in thread
         if (row.threadReplies && row.threadReplies.length > 0) {
             row.threadReplies.forEach(reply => {
@@ -102,6 +165,12 @@ function checkForNewComments(rows) {
                     const emoji = row[user]; // This contains the emoji (👍, 👎, etc.)
                     
                     if (emoji && emoji !== 'Proposer') {
+                        // Use the most recent reply timestamp if available, otherwise use a very old date
+                        // This ensures reactions don't appear newer than they are
+                        const lastReply = row.threadReplies && row.threadReplies.length > 0 
+                            ? row.threadReplies[row.threadReplies.length - 1] 
+                            : null;
+                        
                         notifications.push({
                             id: reactionId,
                             type: 'reaction',
@@ -110,7 +179,7 @@ function checkForNewComments(rows) {
                             emoji: emoji,
                             issueNumber: row.issueNumber,
                             issueTitle: row.Comment.text,
-                            createdAt: new Date().toISOString(), // Approximate
+                            createdAt: lastReply ? lastReply.createdAt : new Date(0).toISOString(), // Use old date if no replies
                             read: isRead
                         });
                     }
@@ -119,8 +188,21 @@ function checkForNewComments(rows) {
         }
     });
     
-    // Sort by most recent first
-    notifications.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    // Save current resolution states for next comparison
+    saveResolutionStates(currentResolutionStates);
+    
+    // Sort by most recent first (newest at top)
+    notifications.sort((a, b) => {
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        
+        // Debug log
+        if (notifications.length <= 10) {
+            console.log(`Sorting: ${a.author || 'Resolution'} (${dateA}) vs ${b.author || 'Resolution'} (${dateB})`);
+        }
+        
+        return dateB - dateA; // Descending order (newest first)
+    });
     
     updateNotificationBadge();
 }
@@ -152,7 +234,14 @@ function renderNotificationPanel() {
         const readClass = notif.read ? 'read' : 'unread';
         html += `<div class="notification-item ${readClass}" data-thread-url="${notif.threadUrl}" data-notif-id="${notif.id}">`;
         
-        if (notif.type === 'reaction') {
+        if (notif.type === 'resolution') {
+            // Resolution notification
+            const resolverText = notif.resolver ? ` by ${notif.resolver}` : '';
+            html += `<div class="notification-author">✅ Thread #${notif.issueNumber} was resolved${resolverText}</div>`;
+            html += `<div class="notification-preview">`;
+            html += `<a href="${notif.threadUrl}" target="_blank" class="notif-link">${escapeHtml(notif.issueTitle.substring(0, 80))}${notif.issueTitle.length > 80 ? '...' : ''}</a>`;
+            html += `</div>`;
+        } else if (notif.type === 'reaction') {
             // Reaction notification
             html += `<div class="notification-author">${notif.author} reacted with ${notif.emoji}</div>`;
             html += `<div class="notification-preview">`;
@@ -198,29 +287,38 @@ function renderNotificationPanel() {
 // Scroll to comment and expand thread
 function scrollToComment(threadUrl) {
     const threadId = `thread-${encodeURIComponent(threadUrl)}`;
-    const threadView = document.getElementById(threadId);
+    let row = null;
     
+    // Try to find the thread view first
+    const threadView = document.getElementById(threadId);
     if (threadView) {
-        // Find the row containing this thread
-        const row = threadView.closest('tr');
-        if (row) {
-            // Scroll to row
-            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            
-            // Highlight row briefly
-            row.style.background = '#fff3cd';
-            setTimeout(() => {
-                row.style.background = '';
-            }, 2000);
-            
-            // Expand thread if collapsed
-            if (threadView.style.display === 'none') {
-                const button = document.querySelector(`[data-thread-id="${threadId}"]`);
-                if (button) {
-                    button.click();
-                }
+        row = threadView.closest('tr');
+        
+        // Expand thread if collapsed
+        if (threadView.style.display === 'none') {
+            const button = document.querySelector(`[data-thread-id="${threadId}"]`);
+            if (button) {
+                button.click();
             }
         }
+    } else {
+        // No thread view (no replies) - find row by comment URL
+        // Search all comment links for matching URL
+        const commentLinks = document.querySelectorAll('a[href="' + threadUrl + '"]');
+        if (commentLinks.length > 0) {
+            row = commentLinks[0].closest('tr');
+        }
+    }
+    
+    if (row) {
+        // Scroll to row
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        
+        // Highlight row briefly
+        row.style.background = '#fff3cd';
+        setTimeout(() => {
+            row.style.background = '';
+        }, 2000);
     }
     
     // Close notification panel
@@ -1453,8 +1551,13 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId) {
     const groupIdAttr = isInDuplicateGroup && groupId ? ` data-group-id="${groupId}"` : '';
     let html = `<tr class="${rowClass}"${groupIdAttr}>`;
     
-    // Issue number
-    html += `<td><strong>${row.issueNumber}</strong></td>`;
+        // Issue number with resolution status
+        html += `<td>`;
+        html += `<strong>${row.issueNumber}</strong>`;
+        if (row.isResolved) {
+            html += `<span class="resolved-badge" title="Thread resolved">✓</span>`;
+        }
+        html += `</td>`;
     
     // Comment with thread view
     const hasReplies = row.replyCount > 0;

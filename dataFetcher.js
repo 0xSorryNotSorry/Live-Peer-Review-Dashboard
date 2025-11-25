@@ -212,7 +212,8 @@ export async function getPRReviewCommentsWithReactions(
                 duplicateOf: duplicateOriginalUrl,
                 commentUrl: commentUrl,
                 threadReplies: threadReplies,
-                replyCount: threadReplies.length
+                replyCount: threadReplies.length,
+                isResolved: isResolved
             };
 
             const reactions = firstComment.reactions.nodes;
