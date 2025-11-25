@@ -113,11 +113,20 @@ function checkForNewComments(rows) {
             let resolver = null;
             if (row.threadReplies && row.threadReplies.length > 0) {
                 // Look for "marked this conversation as resolved" message
-                const resolutionComment = row.threadReplies.find(r => 
-                    r.body && r.body.includes('marked this conversation as resolved')
-                );
+                const resolutionComment = row.threadReplies.find(r => {
+                    const hasMessage = r.body && (
+                        r.body.includes('marked this conversation as resolved') ||
+                        r.body.includes('resolved this conversation')
+                    );
+                    if (hasMessage) {
+                        console.log('Found resolution message:', r.body, 'by', r.author);
+                    }
+                    return hasMessage;
+                });
                 if (resolutionComment) {
                     resolver = resolutionComment.author;
+                } else {
+                    console.log('No resolution message found in', row.threadReplies.length, 'replies for', row.commentUrl);
                 }
             }
             
