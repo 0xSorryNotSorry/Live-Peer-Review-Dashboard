@@ -797,7 +797,16 @@ export async function generatePDF(repos, name) {
   `;
 
     console.info("Generating PDF...");
-    const browser = await puppeteer.launch();
+    const launchOptions = {
+        // Helpful flags when running inside containers or CI
+        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+        headless: true,
+    };
+    // Allow overriding the Chrome/Chromium binary path if provided
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+        launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+    const browser = await puppeteer.launch(launchOptions);
     const page = await browser.newPage();
 
     await page.setContent(htmlContent, { waitUntil: "networkidle0" });
