@@ -3,6 +3,15 @@ import { fileURLToPath } from "url";
 import { dirname, join, resolve } from "path";
 import fs from "fs/promises";
 import { getPRReviewCommentsWithReactions, generatePDF } from "./dataFetcher.js";
+import { Octokit } from "@octokit/rest";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+// Initialize Octokit for posting comments
+const octokit = new Octokit({
+    auth: process.env.GITHUB_TOKEN,
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -12,6 +21,42 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
 // In-memory undupe flags (cleared on server restart)
 const undupeFlags = {};
+
+// In-memory cache for PR data
+const prDataCache = new Map();
+const CACHE_TTL = 30 * 1000; // 30 seconds
+
+function getCacheKey(owner, repo, prNumber) {
+    return `${owner}/${repo}#${prNumber}`;
+}
+
+function getCachedData(owner, repo, prNumber) {
+    const key = getCacheKey(owner, repo, prNumber);
+    const cached = prDataCache.get(key);
+
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        const age = Math.round((Date.now() - cached.timestamp) / 1000);
+        console.log(`📦 Serving cached data for ${key} (age: ${age}s)`);
+        return cached.data;
+    }
+
+    return null;
+}
+
+function setCachedData(owner, repo, prNumber, data) {
+    const key = getCacheKey(owner, repo, prNumber);
+    prDataCache.set(key, {
+        data: data,
+        timestamp: Date.now(),
+    });
+    console.log(`💾 Cached data for ${key}`);
+}
+
+function invalidateCache(owner, repo, prNumber) {
+    const key = getCacheKey(owner, repo, prNumber);
+    prDataCache.delete(key);
+    console.log(`🗑️ Cache invalidated for ${key}`);
+}
 
 // Data directory for configs and app-generated files (defaults to working directory)
 const DATA_DIR = process.env.APP_DATA_DIR
@@ -57,10 +102,11 @@ async function loadConfig() {
     }
 }
 
-// Load researchers config
-async function loadResearchers() {
+// Load researchers config for a specific PR
+async function loadResearchers(owner, repo, prNumber) {
     try {
-        const data = await fs.readFile(dataPath("researchers.json"), "utf8");
+        const filename = `researchers-${owner}-${repo}-${prNumber}.json`;
+        const data = await fs.readFile(dataPath(filename), "utf8");
         return JSON.parse(data);
     } catch (error) {
         // Create default if doesn't exist
@@ -68,11 +114,6 @@ async function loadResearchers() {
             researchers: [],
             lsr: null,
         };
-        await ensureDataDir();
-        await fs.writeFile(
-            dataPath("researchers.json"),
-            JSON.stringify(defaultResearchers, null, 2),
-        );
         return defaultResearchers;
     }
 }
@@ -96,22 +137,17 @@ async function saveAssignments(assignments) {
     );
 }
 
-// Save researchers config
-async function saveResearchers(researchers) {
+// Save researchers config for a specific PR
+async function saveResearchers(owner, repo, prNumber, researchers) {
     await ensureDataDir();
-    await fs.writeFile(
-        dataPath("researchers.json"),
-        JSON.stringify(researchers, null, 2),
-    );
+    const filename = `researchers-${owner}-${repo}-${prNumber}.json`;
+    await fs.writeFile(dataPath(filename), JSON.stringify(researchers, null, 2));
 }
 
 // API: Get PR data
 app.get("/api/data", async (req, res) => {
     try {
         const config = await loadConfig();
-        const researchersConfig = await loadResearchers();
-        const assignments = await loadAssignments();
-
         if (!config || !config.repositories || config.repositories.length === 0) {
             return res.status(400).json({ error: "No repository configured" });
         }
@@ -123,6 +159,22 @@ app.get("/api/data", async (req, res) => {
         }
 
         const repo = config.repositories[prIndex];
+        const forceRefresh = req.query.force === "true";
+
+        // Check cache first (unless force refresh)
+        if (!forceRefresh) {
+            const cached = getCachedData(repo.owner, repo.repo, repo.pullRequestNumber);
+            if (cached) {
+                return res.json(cached);
+            }
+        }
+
+        const researchersConfig = await loadResearchers(
+            repo.owner,
+            repo.repo,
+            repo.pullRequestNumber,
+        );
+        const assignments = await loadAssignments();
         const data = await getPRReviewCommentsWithReactions(
             repo.owner,
             repo.repo,
@@ -188,11 +240,16 @@ app.get("/api/data", async (req, res) => {
             };
         });
 
-        res.json({
+        const responseData = {
             ...data,
             repository: repo,
             researchersConfig,
-        });
+        };
+
+        // Cache the data
+        setCachedData(repo.owner, repo.repo, repo.pullRequestNumber, responseData);
+
+        res.json(responseData);
     } catch (error) {
         console.error("Error fetching data:", error);
 
@@ -208,20 +265,28 @@ app.get("/api/data", async (req, res) => {
     }
 });
 
-// API: Get researchers
+// API: Get researchers for active PR
 app.get("/api/researchers", async (req, res) => {
     try {
-        const researchers = await loadResearchers();
+        const { owner, repo, prNumber } = req.query;
+        if (!owner || !repo || !prNumber) {
+            return res.status(400).json({ error: "Missing PR info" });
+        }
+        const researchers = await loadResearchers(owner, repo, parseInt(prNumber));
         res.json(researchers);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// API: Update researchers
+// API: Update researchers for active PR
 app.post("/api/researchers", async (req, res) => {
     try {
-        await saveResearchers(req.body);
+        const { owner, repo, prNumber, researchers, lsr } = req.body;
+        if (!owner || !repo || !prNumber) {
+            return res.status(400).json({ error: "Missing PR info" });
+        }
+        await saveResearchers(owner, repo, parseInt(prNumber), { researchers, lsr });
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -384,6 +449,72 @@ app.put("/api/prs/update-all", async (req, res) => {
         res.json({ success: true });
     } catch (error) {
         console.error("Error updating PRs:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// API: Post comment to GitHub (for LSR assignments)
+app.post("/api/post-comment", async (req, res) => {
+    try {
+        const { owner, repo, prNumber, commentUrl, body } = req.body;
+
+        if (!owner || !repo || !prNumber || !commentUrl || !body) {
+            return res.status(400).json({ error: "Missing required fields" });
+        }
+
+        // Extract comment ID from URL (e.g., #discussion_r123456)
+        const match = commentUrl.match(/discussion_r(\d+)/);
+        if (!match) {
+            return res.status(400).json({ error: "Invalid comment URL" });
+        }
+
+        const commentId = parseInt(match[1]);
+
+        // Post reply to the comment
+        const response = await octokit.rest.pulls.createReplyForReviewComment({
+            owner,
+            repo,
+            pull_number: prNumber,
+            comment_id: commentId,
+            body,
+        });
+
+        console.log(`✅ Posted LSR assignment comment to ${owner}/${repo}#${prNumber}`);
+        res.json({ success: true, commentId: response.data.id });
+    } catch (error) {
+        console.error("Error posting comment:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// API: Delete comment from GitHub
+app.post("/api/delete-comment", async (req, res) => {
+    try {
+        const { owner, repo, prNumber, commentId } = req.body;
+
+        console.log("Delete comment request:", { owner, repo, prNumber, commentId });
+
+        if (!owner || !repo || !prNumber || !commentId) {
+            console.error("Missing fields:", { owner, repo, prNumber, commentId });
+            return res
+                .status(400)
+                .json({
+                    error: "Missing required fields",
+                    received: { owner, repo, prNumber, commentId },
+                });
+        }
+
+        // Delete the comment
+        await octokit.rest.pulls.deleteReviewComment({
+            owner,
+            repo,
+            comment_id: commentId,
+        });
+
+        console.log(`🗑️ Deleted comment ${commentId} from ${owner}/${repo}#${prNumber}`);
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Error deleting comment:", error);
         res.status(500).json({ error: error.message });
     }
 });

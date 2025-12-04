@@ -119,6 +119,7 @@ export async function getPRReviewCommentsWithReactions(
                     id
                     body
                     url
+                    createdAt
                     author {
                       login
                     }
@@ -187,12 +188,39 @@ export async function getPRReviewCommentsWithReactions(
 
             const isDuplicate = duplicateOriginalUrl !== null;
 
+            // Process all thread comments for chat view
+            const threadReplies = threadComments.slice(1).map(comment => {
+                // Extract numeric comment ID from URL
+                const urlMatch = comment.url.match(/discussion_r(\d+)/);
+                const numericId = urlMatch ? parseInt(urlMatch[1]) : null;
+                
+                return {
+                    id: comment.id,
+                    numericId: numericId,
+                    body: comment.body,
+                    url: comment.url,
+                    author: comment.author.login,
+                    createdAt: comment.createdAt || new Date().toISOString(),
+                    reactions: comment.reactions.nodes.map(r => ({
+                        content: getEmoji(r.content),
+                        user: r.user.login
+                    }))
+                };
+            });
+
             const row = {
-                Comment: { text: truncatedText, hyperlink: commentUrl },
+                Comment: { 
+                    text: truncatedText, 
+                    hyperlink: commentUrl,
+                    fullText: commentText 
+                },
                 proposer: commenter.login,
                 isDuplicate: isDuplicate,
                 duplicateOf: duplicateOriginalUrl,
                 commentUrl: commentUrl,
+                threadReplies: threadReplies,
+                replyCount: threadReplies.length,
+                isResolved: isResolved
             };
 
             const reactions = firstComment.reactions.nodes;

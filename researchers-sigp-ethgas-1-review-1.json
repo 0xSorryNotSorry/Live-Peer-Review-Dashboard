@@ -1,13 +1,10 @@
 {
-  "owner": "sigp",
-  "repo": "ethgas-1-review",
-  "prNumber": 1,
   "researchers": [
     {
-      "handle": "andyfeili"
+      "handle": "Ebhub"
     },
     {
-      "handle": "EBhub"
+      "handle": "andyfeili"
     },
     {
       "handle": "0xSorryNotSorry"

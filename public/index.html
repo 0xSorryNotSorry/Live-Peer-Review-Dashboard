@@ -52,6 +52,7 @@
             </div>
             
             <button id="manualRefresh" class="btn btn-secondary">🔄 Refresh Now</button>
+            <button id="forceRefresh" class="btn btn-secondary">⚡ Force Refresh</button>
             <button id="generatePDF" class="btn btn-primary">📄 Generate PDF</button>
             <button id="manageResearchers" class="btn btn-secondary">👥 Manage Researchers</button>
             <button id="toggleNightMode" class="btn btn-secondary">🌙 Night Mode</button>
@@ -196,6 +197,61 @@
             </section>
         </div>
     </div>
+
+    <!-- Floating Refresh Button (draggable) -->
+    <div id="floatingRefresh" class="floating-refresh" title="Click: Refresh (uses cache)
+Shift+Click: Force Refresh (bypasses cache)
+Drag: Move button">
+        <div class="refresh-icon">🔄</div>
+        <div class="refresh-hint">Shift = ⚡</div>
+    </div>
+
+    <!-- Go to Top Button -->
+    <button id="goToTop" class="go-to-top" title="Go to top">
+        ⬆️
+    </button>
+
+    <!-- Notification Button -->
+    <div id="notificationBtn" class="notification-btn" title="New comments from researchers">
+        🔔
+        <span class="notification-badge" id="notificationBadge" style="display: none;">0</span>
+    </div>
+
+        <!-- Notification Panel -->
+        <div id="notificationPanel" class="notification-panel" style="display: none;">
+            <div class="notification-header">
+                <h3>New Comments</h3>
+                <div class="notification-actions">
+                    <button id="markAllRead" class="notif-action-btn" title="Mark all as read">✓</button>
+                    <button id="markAllUnread" class="notif-action-btn" title="Mark all as unread">↻</button>
+                    <button class="close-panel">✕</button>
+                </div>
+            </div>
+            <div class="notification-list" id="notificationList">
+                <p class="no-notifications">No new comments</p>
+            </div>
+        </div>
+
+        <!-- LSR Assignment Modal -->
+        <div id="lsrAssignmentModal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2>Assign PIC of Reporting</h2>
+                
+                <div class="lsr-assignment-form">
+                    <h3>PIC of Reporting</h3>
+                    <div class="sr-checkboxes" id="srCheckboxes"></div>
+                    
+                    <h3>Guidance (Optional)</h3>
+                    <textarea id="lsrGuidance" class="lsr-guidance" placeholder="Add guidance for the assigned SR(s)..."></textarea>
+                    
+                    <div class="lsr-actions">
+                        <button id="submitLSRAssignment" class="btn btn-primary">Post Assignment</button>
+                        <button id="cancelLSRAssignment" class="btn btn-secondary">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
 
     <script src="app.js"></script>
 </body>

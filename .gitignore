@@ -6,3 +6,6 @@ node_modules
 *.pdf
 assignments.json
 server.log
+start.sh
+stop.sh
+restart.sh

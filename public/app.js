@@ -9,13 +9,385 @@ let isNightMode = false;
 let currentRepoKey = null;
 let allPRs = [];
 let activePRIndex = 0;
+let notifications = [];
+let lastSeenComments = new Set();
+let currentLSRAssignment = null; // Stores {groupNumber, primaryCommentUrl}
 
 const EXTRA_COLUMNS_PREFIX = 'arm-extra-columns:';
 const EXTRA_COLUMN_DATA_PREFIX = 'arm-extra-column-data:';
+const SEEN_COMMENTS_PREFIX = 'arm-seen-comments:';
+const RESOLUTION_STATES_PREFIX = 'arm-resolution-states:';
 
 function escapeAttribute(value) {
     if (value === undefined || value === null) return '';
     return String(value).replace(/"/g, '&quot;');
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function formatTimestamp(isoString) {
+    if (!isoString) return '';
+    const date = new Date(isoString);
+    const now = new Date();
+    const diff = now - date;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return `${days}d ago`;
+}
+
+// Load seen comments from localStorage
+function loadSeenComments() {
+    try {
+        const key = getStorageKey(SEEN_COMMENTS_PREFIX);
+        const data = localStorage.getItem(key);
+        return data ? new Set(JSON.parse(data)) : new Set();
+    } catch (error) {
+        return new Set();
+    }
+}
+
+// Save seen comments to localStorage
+function saveSeenComments() {
+    try {
+        const key = getStorageKey(SEEN_COMMENTS_PREFIX);
+        localStorage.setItem(key, JSON.stringify(Array.from(lastSeenComments)));
+    } catch (error) {
+        console.error('Failed to save seen comments:', error);
+    }
+}
+
+// Load resolution states from localStorage
+function loadResolutionStates() {
+    try {
+        const key = getStorageKey(RESOLUTION_STATES_PREFIX);
+        const data = localStorage.getItem(key);
+        if (data) {
+            const obj = JSON.parse(data);
+            return new Map(Object.entries(obj));
+        }
+    } catch (error) {
+        console.error('Failed to load resolution states:', error);
+    }
+    return new Map();
+}
+
+// Save resolution states to localStorage
+function saveResolutionStates(statesMap) {
+    try {
+        const key = getStorageKey(RESOLUTION_STATES_PREFIX);
+        const obj = Object.fromEntries(statesMap);
+        localStorage.setItem(key, JSON.stringify(obj));
+    } catch (error) {
+        console.error('Failed to save resolution states:', error);
+    }
+}
+
+// Check for new comments and update notifications
+function checkForNewComments(rows) {
+    lastSeenComments = loadSeenComments();
+    const previousResolutionStates = loadResolutionStates();
+    const currentResolutionStates = new Map();
+    notifications = [];
+    
+    rows.forEach(row => {
+        // Track current resolution state
+        currentResolutionStates.set(row.commentUrl, row.isResolved);
+        
+        // Check for resolution changes
+        const wasResolved = previousResolutionStates.get(row.commentUrl);
+        if (row.isResolved && wasResolved === false) {
+            // Thread was just resolved - find who resolved it
+            const resolutionId = `${row.commentUrl}-resolved`;
+            const isRead = lastSeenComments.has(resolutionId);
+            
+            // Try to find who resolved it from thread comments
+            let resolver = null;
+            if (row.threadReplies && row.threadReplies.length > 0) {
+                // Look for "marked this conversation as resolved" message
+                const resolutionComment = row.threadReplies.find(r => {
+                    const hasMessage = r.body && (
+                        r.body.includes('marked this conversation as resolved') ||
+                        r.body.includes('resolved this conversation')
+                    );
+                    if (hasMessage) {
+                        console.log('Found resolution message:', r.body, 'by', r.author);
+                    }
+                    return hasMessage;
+                });
+                if (resolutionComment) {
+                    resolver = resolutionComment.author;
+                } else {
+                    console.log('No resolution message found in', row.threadReplies.length, 'replies for', row.commentUrl);
+                }
+            }
+            
+            notifications.push({
+                id: resolutionId,
+                type: 'resolution',
+                threadUrl: row.commentUrl,
+                issueNumber: row.issueNumber,
+                issueTitle: row.Comment.text,
+                resolver: resolver,
+                createdAt: new Date().toISOString(), // Use NOW since we just detected the resolution
+                read: isRead
+            });
+        }
+        
+        // Check for new replies in thread
+        if (row.threadReplies && row.threadReplies.length > 0) {
+            row.threadReplies.forEach(reply => {
+                const commentId = `${row.commentUrl}-reply-${reply.id}`;
+                const isRead = lastSeenComments.has(commentId);
+                
+                notifications.push({
+                    id: commentId,
+                    type: 'comment',
+                    threadUrl: row.commentUrl,
+                    author: reply.author,
+                    body: reply.body,
+                    createdAt: reply.createdAt,
+                    issueNumber: row.issueNumber,
+                    issueTitle: row.Comment.text,
+                    reactions: reply.reactions || [],
+                    read: isRead
+                });
+            });
+        }
+        
+        // Check for new reactions on the main comment
+        if (row.reactions) {
+            Object.keys(row.reactions).forEach(user => {
+                if (row.reactions[user] && user !== row.proposer) {
+                    const reactionId = `${row.commentUrl}-reaction-${user}`;
+                    const isRead = lastSeenComments.has(reactionId);
+                    
+                    // Get the emoji for this user
+                    const emoji = row[user]; // This contains the emoji (👍, 👎, etc.)
+                    
+                    if (emoji && emoji !== 'Proposer') {
+                        // Use the most recent reply timestamp if available, otherwise use a very old date
+                        // This ensures reactions don't appear newer than they are
+                        const lastReply = row.threadReplies && row.threadReplies.length > 0 
+                            ? row.threadReplies[row.threadReplies.length - 1] 
+                            : null;
+                        
+                        notifications.push({
+                            id: reactionId,
+                            type: 'reaction',
+                            threadUrl: row.commentUrl,
+                            author: user,
+                            emoji: emoji,
+                            issueNumber: row.issueNumber,
+                            issueTitle: row.Comment.text,
+                            createdAt: lastReply ? lastReply.createdAt : new Date(0).toISOString(), // Use old date if no replies
+                            read: isRead
+                        });
+                    }
+                }
+            });
+        }
+    });
+    
+    // Save current resolution states for next comparison
+    saveResolutionStates(currentResolutionStates);
+    
+    // Sort by most recent first (newest at top)
+    notifications.sort((a, b) => {
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        
+        // Debug log
+        if (notifications.length <= 10) {
+            console.log(`Sorting: ${a.author || 'Resolution'} (${dateA}) vs ${b.author || 'Resolution'} (${dateB})`);
+        }
+        
+        return dateB - dateA; // Descending order (newest first)
+    });
+    
+    updateNotificationBadge();
+}
+
+// Update notification badge count (only unread)
+function updateNotificationBadge() {
+    const badge = document.getElementById('notificationBadge');
+    const unreadCount = notifications.filter(n => !n.read).length;
+    
+    if (unreadCount > 0) {
+        badge.textContent = unreadCount;
+        badge.style.display = 'flex';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+// Render notification panel
+function renderNotificationPanel() {
+    const list = document.getElementById('notificationList');
+    
+    if (notifications.length === 0) {
+        list.innerHTML = '<p class="no-notifications">No new comments</p>';
+        return;
+    }
+    
+    let html = '';
+    notifications.forEach(notif => {
+        const readClass = notif.read ? 'read' : 'unread';
+        html += `<div class="notification-item ${readClass}" data-thread-url="${notif.threadUrl}" data-notif-id="${notif.id}">`;
+        
+        if (notif.type === 'resolution') {
+            // Resolution notification
+            const resolverText = notif.resolver ? ` by ${notif.resolver}` : '';
+            html += `<div class="notification-author">✅ Thread #${notif.issueNumber} was resolved${resolverText}</div>`;
+            html += `<div class="notification-preview">`;
+            html += `<a href="${notif.threadUrl}" target="_blank" class="notif-link">${escapeHtml(notif.issueTitle.substring(0, 80))}${notif.issueTitle.length > 80 ? '...' : ''}</a>`;
+            html += `</div>`;
+        } else if (notif.type === 'reaction') {
+            // Reaction notification
+            html += `<div class="notification-author">${notif.author} reacted with ${notif.emoji}</div>`;
+            html += `<div class="notification-preview">`;
+            html += `<a href="${notif.threadUrl}" target="_blank" class="notif-link">${escapeHtml(notif.issueTitle.substring(0, 80))}${notif.issueTitle.length > 80 ? '...' : ''}</a>`;
+            html += `</div>`;
+        } else {
+            // Comment notification
+            html += `<div class="notification-author">${notif.author} commented on #${notif.issueNumber}</div>`;
+            html += `<div class="notification-preview">${escapeHtml(notif.body.substring(0, 100))}${notif.body.length > 100 ? '...' : ''}</div>`;
+            
+            // Show reactions if any
+            if (notif.reactions && notif.reactions.length > 0) {
+                html += `<div class="notification-reactions">`;
+                notif.reactions.forEach(r => {
+                    html += `<span class="reaction-mini">${r.content}</span>`;
+                });
+                html += `</div>`;
+            }
+        }
+        
+        html += `<div class="comment-time">${formatTimestamp(notif.createdAt)}</div>`;
+        html += `</div>`;
+    });
+    
+    list.innerHTML = html;
+    
+    // Add click handlers
+    document.querySelectorAll('.notification-item').forEach(item => {
+        item.addEventListener('click', function(e) {
+            // Don't trigger if clicking the link
+            if (e.target.classList.contains('notif-link')) {
+                return;
+            }
+            
+            const threadUrl = this.dataset.threadUrl;
+            const notifId = this.dataset.notifId;
+            scrollToComment(threadUrl);
+            markSingleNotificationAsRead(notifId);
+        });
+    });
+}
+
+// Scroll to comment and expand thread
+function scrollToComment(threadUrl) {
+    const threadId = `thread-${encodeURIComponent(threadUrl)}`;
+    let row = null;
+    
+    // Try to find the thread view first
+    const threadView = document.getElementById(threadId);
+    if (threadView) {
+        row = threadView.closest('tr');
+        
+        // Expand thread if collapsed
+        if (threadView.style.display === 'none') {
+            const button = document.querySelector(`[data-thread-id="${threadId}"]`);
+            if (button) {
+                button.click();
+            }
+        }
+    } else {
+        // No thread view (no replies) - find row by comment URL
+        // Search all comment links for matching URL
+        const commentLinks = document.querySelectorAll('a[href="' + threadUrl + '"]');
+        if (commentLinks.length > 0) {
+            row = commentLinks[0].closest('tr');
+        }
+    }
+    
+    if (row) {
+        // Scroll to row
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        
+        // Highlight row briefly
+        row.style.background = '#fff3cd';
+        setTimeout(() => {
+            row.style.background = '';
+        }, 2000);
+    }
+    
+    // Close notification panel
+    document.getElementById('notificationPanel').style.display = 'none';
+}
+
+// Mark a single notification as read
+function markSingleNotificationAsRead(notifId) {
+    const notif = notifications.find(n => n.id === notifId);
+    if (notif && !notif.read) {
+        notif.read = true;
+        lastSeenComments.add(notif.id);
+        saveSeenComments();
+        updateNotificationBadge();
+        renderNotificationPanel();
+    }
+}
+
+// Mark all notifications for a thread as read (but keep in list)
+function markNotificationAsRead(threadUrl) {
+    let badgeCountChanged = false;
+    
+    notifications.forEach(n => {
+        if (n.threadUrl === threadUrl && !n.read) {
+            n.read = true;
+            lastSeenComments.add(n.id);
+            badgeCountChanged = true;
+        }
+    });
+    
+    if (badgeCountChanged) {
+        saveSeenComments();
+        updateNotificationBadge();
+        renderNotificationPanel();
+    }
+}
+
+// Mark all notifications as read
+function markAllNotificationsRead() {
+    notifications.forEach(n => {
+        n.read = true;
+        lastSeenComments.add(n.id);
+    });
+    
+    saveSeenComments();
+    updateNotificationBadge();
+    renderNotificationPanel();
+}
+
+// Mark all notifications as unread
+function markAllNotificationsUnread() {
+    notifications.forEach(n => {
+        n.read = false;
+        lastSeenComments.delete(n.id);
+    });
+    
+    saveSeenComments();
+    updateNotificationBadge();
+    renderNotificationPanel();
 }
 
 function getRowKey(row) {
@@ -137,9 +509,178 @@ function applyNightModeState() {
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
+    setupFloatingButtons();
     loadAllPRs();
     // Don't start auto-refresh by default (manual mode is selected)
 });
+
+// Setup floating refresh button (draggable) and go-to-top button
+function setupFloatingButtons() {
+    const floatingRefresh = document.getElementById('floatingRefresh');
+    const goToTop = document.getElementById('goToTop');
+    
+    if (!floatingRefresh || !goToTop) return;
+    
+    // Floating refresh button - draggable
+    let isDragging = false;
+    let hasMoved = false;
+    let currentX = 0;
+    let currentY = 0;
+    let initialX;
+    let initialY;
+    let xOffset = 0;
+    let yOffset = 0;
+    
+    floatingRefresh.addEventListener('mousedown', dragStart);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', dragEnd);
+    
+    function dragStart(e) {
+        if (e.target === floatingRefresh || floatingRefresh.contains(e.target)) {
+            initialX = e.clientX - xOffset;
+            initialY = e.clientY - yOffset;
+            isDragging = true;
+            hasMoved = false;
+            floatingRefresh.classList.add('dragging');
+        }
+    }
+    
+    function drag(e) {
+        if (isDragging) {
+            e.preventDefault();
+            currentX = e.clientX - initialX;
+            currentY = e.clientY - initialY;
+            
+            // Mark as moved if dragged more than 5px
+            if (Math.abs(currentX - xOffset) > 5 || Math.abs(currentY - yOffset) > 5) {
+                hasMoved = true;
+            }
+            
+            xOffset = currentX;
+            yOffset = currentY;
+            
+            setTranslate(currentX, currentY, floatingRefresh);
+        }
+    }
+    
+    function dragEnd(e) {
+        if (isDragging) {
+            isDragging = false;
+            floatingRefresh.classList.remove('dragging');
+            
+            // If it was a click (not a drag), trigger refresh
+            if (!hasMoved) {
+                const forceRefresh = e.shiftKey;
+                loadData(forceRefresh);
+                
+                const iconEl = floatingRefresh.querySelector('.refresh-icon');
+                if (iconEl) {
+                    if (forceRefresh) {
+                        iconEl.textContent = '⚡';
+                        setTimeout(() => {
+                            iconEl.textContent = '🔄';
+                        }, 1000);
+                    } else {
+                        // Show spinning animation for regular refresh
+                        iconEl.style.animation = 'spin 1s linear';
+                        setTimeout(() => {
+                            iconEl.style.animation = '';
+                        }, 1000);
+                    }
+                }
+            }
+        }
+    }
+    
+    function setTranslate(xPos, yPos, el) {
+        el.style.transform = `translate3d(${xPos}px, ${yPos}px, 0)`;
+    }
+    
+    // Go to top button - show/hide on scroll
+    window.addEventListener('scroll', () => {
+        if (window.pageYOffset > 300) {
+            goToTop.classList.add('visible');
+        } else {
+            goToTop.classList.remove('visible');
+        }
+    });
+    
+    goToTop.addEventListener('click', () => {
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
+    });
+    
+    // Notification button and panel
+    const notificationBtn = document.getElementById('notificationBtn');
+    const notificationPanel = document.getElementById('notificationPanel');
+    const closePanel = notificationPanel.querySelector('.close-panel');
+    
+    if (notificationBtn) {
+        notificationBtn.addEventListener('click', () => {
+            const isVisible = notificationPanel.style.display === 'block';
+            notificationPanel.style.display = isVisible ? 'none' : 'block';
+            if (!isVisible) {
+                renderNotificationPanel();
+            }
+        });
+    }
+    
+    if (closePanel) {
+        closePanel.addEventListener('click', () => {
+            notificationPanel.style.display = 'none';
+        });
+    }
+    
+    // Mark all read button
+    const markAllReadBtn = document.getElementById('markAllRead');
+    if (markAllReadBtn) {
+        markAllReadBtn.addEventListener('click', () => {
+            markAllNotificationsRead();
+        });
+    }
+    
+    // Mark all unread button
+    const markAllUnreadBtn = document.getElementById('markAllUnread');
+    if (markAllUnreadBtn) {
+        markAllUnreadBtn.addEventListener('click', () => {
+            markAllNotificationsUnread();
+        });
+    }
+    
+    // Close panel when clicking outside
+    document.addEventListener('click', (e) => {
+        if (notificationPanel.style.display === 'block' && 
+            !notificationPanel.contains(e.target) && 
+            e.target !== notificationBtn) {
+            notificationPanel.style.display = 'none';
+        }
+    });
+    
+    // LSR Assignment Modal
+    const lsrModal = document.getElementById('lsrAssignmentModal');
+    if (lsrModal) {
+        const closeBtn = lsrModal.querySelector('.close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                lsrModal.style.display = 'none';
+            });
+        }
+        
+        const submitBtn = document.getElementById('submitLSRAssignment');
+        if (submitBtn) {
+            submitBtn.addEventListener('click', submitLSRAssignment);
+        }
+        
+        const cancelBtn = document.getElementById('cancelLSRAssignment');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                lsrModal.style.display = 'none';
+            });
+        }
+    }
+}
 
 // Load all PRs and render tabs
 async function loadAllPRs() {
@@ -257,7 +798,7 @@ async function saveAllPRs() {
 }
 
 // Switch to a different PR
-function switchToPR(index) {
+async function switchToPR(index) {
     if (index === activePRIndex) return;
     
     activePRIndex = index;
@@ -268,6 +809,16 @@ function switchToPR(index) {
         document.getElementById('prOwner').value = activeRepo.owner;
         document.getElementById('prRepo').value = activeRepo.repo;
         document.getElementById('prNumber').value = activeRepo.pullRequestNumber;
+        
+        // Load researchers for this PR
+        try {
+            const response = await fetch(`/api/researchers?owner=${activeRepo.owner}&repo=${activeRepo.repo}&prNumber=${activeRepo.pullRequestNumber}`);
+            const config = await response.json();
+            researchersConfig = config;
+        } catch (error) {
+            console.error('Error loading researchers:', error);
+            researchersConfig = { researchers: [], lsr: null };
+        }
     }
     
     renderPRTabs();
@@ -465,6 +1016,11 @@ function setupEventListeners() {
     // Manual refresh
     document.getElementById('manualRefresh').addEventListener('click', () => {
         loadData();
+    });
+    
+    // Force refresh (bypass cache)
+    document.getElementById('forceRefresh').addEventListener('click', () => {
+        loadData(true);
     });
 
     // Generate PDF
@@ -726,13 +1282,14 @@ function stopAutoRefresh() {
     }
 }
 
-async function loadData() {
+async function loadData(forceRefresh = false) {
     try {
         document.getElementById('loading').style.display = 'block';
         document.getElementById('error').style.display = 'none';
         
         // Fetch data for the active PR
-        const response = await fetch(`/api/data?prIndex=${activePRIndex}`);
+        const url = `/api/data?prIndex=${activePRIndex}${forceRefresh ? '&force=true' : ''}`;
+        const response = await fetch(url);
         const data = await response.json();
         
         if (data.error) {
@@ -756,10 +1313,14 @@ function renderData(data) {
     setRepositoryContext(data.repository);
     latestRows = data.rows || [];
     latestCommenters = data.commenters || [];
+    
+    // Check for new comments and update notifications
+    checkForNewComments(latestRows);
+    
     renderRepoInfo(data.repository);
     renderResearchersSection(data.researchersConfig, data.commenters);
     renderProgressCharts(latestRows, data.duplicateGroups, latestCommenters);
-    renderStats(data.stats, data.duplicateGroups);
+    renderStats(data.stats, data.duplicateGroups, latestRows, latestCommenters);
     renderReactionStats(data.reactionStats, data.commenters);
     renderDuplicateGroups(data.duplicateGroups);
     // Hide duplicate assignments section per request
@@ -805,6 +1366,7 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
     
     const totalIssues = uniqueIssues.size;
     let reviewedCount = 0;
+    let greenIssuesCount = 0; // Count of issues worth reporting (green rows)
     let reportedCount = 0;
     
     // Calculate review and report progress
@@ -832,10 +1394,29 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
             reviewedCount++;
         }
         
-        // Check if ANY row in this issue/group is reported (has rocket emoji)
-        // Only green rows (approved) will be reported
+        // Check if issue is green (worth reporting)
+        const isGreenIssue = issueRows.some(row => {
+            const totalCommenters = commenters.length;
+            const thumbsUpCount = row.thumbsUpCount || 0;
+            const isGreen = (thumbsUpCount + 1) >= Math.ceil((2 / 3) * totalCommenters);
+            return isGreen;
+        });
+        
+        if (isGreenIssue) {
+            greenIssuesCount++;
+        }
+        
+        // Check if ANY row in this issue/group is reported (has rocket emoji AND is green)
+        // Only count if the issue has majority thumbs up (green row) AND has rocket
         const hasReported = issueRows.some(row => {
-            return row.Reported === '✅';
+            const totalCommenters = commenters.length;
+            const thumbsUpCount = row.thumbsUpCount || 0;
+            
+            // Must be green (majority thumbs up) AND have rocket emoji
+            const isGreen = (thumbsUpCount + 1) >= Math.ceil((2 / 3) * totalCommenters);
+            const hasRocket = row.Reported === '✅';
+            
+            return isGreen && hasRocket;
         });
         
         if (hasReported) {
@@ -845,7 +1426,10 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
     
     // Calculate percentages
     const reviewPercentage = totalIssues > 0 ? Math.round((reviewedCount / totalIssues) * 100) : 0;
-    const reportPercentage = totalIssues > 0 ? Math.round((reportedCount / totalIssues) * 100) : 0;
+    // Reporting percentage: reported / green issues (not all issues)
+    const reportPercentage = greenIssuesCount > 0 ? Math.round((reportedCount / greenIssuesCount) * 100) : 0;
+    
+    console.log(`📊 Progress: Total=${totalIssues}, Reviewed=${reviewedCount} (${reviewPercentage}%), Green=${greenIssuesCount}, Reported=${reportedCount}/${greenIssuesCount} (${reportPercentage}%)`);
     
     // Update pie charts
     updatePieChart('reviewProgress', 'reviewPercentage', reviewPercentage, '#28a745');
@@ -855,7 +1439,7 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
     document.getElementById('reviewCompleted').textContent = reviewedCount;
     document.getElementById('reviewTotal').textContent = totalIssues;
     document.getElementById('reportCompleted').textContent = reportedCount;
-    document.getElementById('reportTotal').textContent = totalIssues;
+    document.getElementById('reportTotal').textContent = greenIssuesCount; // Show green issues, not total
 }
 
 function updatePieChart(progressId, percentageId, percentage, color) {
@@ -910,10 +1494,50 @@ function renderResearchersSection(config, commenters) {
     section.innerHTML = html;
 }
 
-function renderStats(stats, duplicateGroups) {
-    document.getElementById('reportedCount').textContent = stats.reported;
-    document.getElementById('nonReportedCount').textContent = stats.nonReported;
-    document.getElementById('pendingCount').textContent = stats.pending;
+function renderStats(stats, duplicateGroups, rows, commenters) {
+    // Recalculate stats including duplicate groups
+    const uniqueIssues = new Map();
+    
+    rows.forEach(row => {
+        if (row.isDuplicate && row.groupNumber) {
+            if (!uniqueIssues.has(row.groupNumber)) {
+                uniqueIssues.set(row.groupNumber, { rows: [], isGroup: true });
+            }
+            uniqueIssues.get(row.groupNumber).rows.push(row);
+        } else if (!row.isDuplicate) {
+            uniqueIssues.set(row.commentUrl || row.Comment?.hyperlink, { rows: [row], isGroup: false });
+        }
+    });
+    
+    let reported = 0;
+    let nonReported = 0;
+    let pending = 0;
+    
+    uniqueIssues.forEach((issue) => {
+        const issueRows = issue.rows;
+        const anyResolved = issueRows.some(r => r.isResolved);
+        const anyHasRocket = issueRows.some(r => r.Reported === '✅');
+        
+        if (anyResolved) {
+            const totalCommenters = commenters.length;
+            const anyGreen = issueRows.some(r => {
+                const thumbsUpCount = r.thumbsUpCount || 0;
+                return (thumbsUpCount + 1) >= Math.ceil((2 / 3) * totalCommenters);
+            });
+            
+            if (anyGreen && anyHasRocket) {
+                reported++;
+            } else {
+                nonReported++;
+            }
+        } else {
+            pending++;
+        }
+    });
+    
+    document.getElementById('reportedCount').textContent = reported;
+    document.getElementById('nonReportedCount').textContent = nonReported;
+    document.getElementById('pendingCount').textContent = pending;
     document.getElementById('duplicatesCount').textContent = duplicateGroups.length;
 }
 
@@ -1003,7 +1627,7 @@ function renderDuplicateAssignments(assignments, commenters) {
     document.getElementById('duplicateAssignments').innerHTML = html;
 }
 
-function renderTableRow(row, commenters, isInDuplicateGroup, groupId) {
+function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
     const thumbsUpCount = row.thumbsUpCount;
     const thumbsDownCount = row.thumbsDownCount;
     const totalCommenters = commenters.length;
@@ -1023,11 +1647,83 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId) {
     const groupIdAttr = isInDuplicateGroup && groupId ? ` data-group-id="${groupId}"` : '';
     let html = `<tr class="${rowClass}"${groupIdAttr}>`;
     
-    // Issue number
-    html += `<td><strong>${row.issueNumber}</strong></td>`;
+        // Issue number with resolution status
+        html += `<td>`;
+        html += `<strong>${row.issueNumber}</strong>`;
+        if (row.isResolved) {
+            html += `<span class="resolved-badge" title="Thread resolved">✓</span>`;
+        }
+        html += `</td>`;
     
-    // Comment
-    html += `<td><a href="${row.Comment.hyperlink}" target="_blank">${row.Comment.text}</a></td>`;
+    // Comment with thread view
+    const hasReplies = row.replyCount > 0;
+    const threadId = `thread-${encodeURIComponent(row.commentUrl)}`;
+    
+    html += `<td class="comment-cell">`;
+    
+    // Main comment with expand button if there are replies
+    if (hasReplies) {
+        html += `<div class="comment-header">`;
+        html += `<button class="thread-toggle" data-thread-id="${threadId}">▶ ${row.replyCount} ${row.replyCount === 1 ? 'reply' : 'replies'}</button>`;
+        html += `<a href="${row.Comment.hyperlink}" target="_blank">${row.Comment.text}</a>`;
+        html += `</div>`;
+        
+        // Thread view (collapsed by default)
+        html += `<div class="thread-view" id="${threadId}" style="display: none;">`;
+        
+        // Original comment
+        html += `<div class="thread-comment original">`;
+        html += `<div class="comment-author">${row.proposer}</div>`;
+        html += `<div class="comment-body">${escapeHtml(row.Comment.fullText || row.Comment.text)}</div>`;
+        
+        // Show reactions on original comment
+        const originalReactions = [];
+        commenters.forEach(commenter => {
+            const emoji = row[commenter];
+            if (emoji && emoji !== 'Proposer' && commenter !== row.proposer) {
+                originalReactions.push({ emoji, user: commenter });
+            }
+        });
+        
+        if (originalReactions.length > 0) {
+            html += `<div class="comment-reactions">`;
+            originalReactions.forEach(r => {
+                html += `<span class="reaction">${r.emoji} ${r.user}</span>`;
+            });
+            html += `</div>`;
+        }
+        
+        html += `</div>`;
+        
+        // Replies
+        if (row.threadReplies) {
+            row.threadReplies.forEach(reply => {
+                html += `<div class="thread-comment reply">`;
+                html += `<div class="comment-meta">`;
+                html += `<span class="comment-author">${reply.author}</span>`;
+                html += `<span class="comment-time">${formatTimestamp(reply.createdAt)}</span>`;
+                html += `</div>`;
+                html += `<div class="comment-body">${escapeHtml(reply.body)}</div>`;
+                
+                // Show reactions if any
+                if (reply.reactions && reply.reactions.length > 0) {
+                    html += `<div class="comment-reactions">`;
+                    reply.reactions.forEach(r => {
+                        html += `<span class="reaction">${r.content} ${r.user}</span>`;
+                    });
+                    html += `</div>`;
+                }
+                
+                html += `</div>`;
+            });
+        }
+        
+        html += `</div>`;
+    } else {
+        html += `<a href="${row.Comment.hyperlink}" target="_blank">${row.Comment.text}</a>`;
+    }
+    
+    html += `</td>`;
     
     // Reported
     html += `<td>${row.Reported || ''}</td>`;
@@ -1049,7 +1745,43 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId) {
         html += `<td></td>`;
     }
     
-    const assignedTo = row.assignedTo || '';
+    // Check for LSR assignment in thread replies
+    // For duplicates, check the primary comment (D-X.1) in the group
+    let lsrAssignment = null;
+    
+    if (row.isDuplicate && row.groupNumber) {
+        // Find the primary comment (D-X.1) in this group
+        const primaryIssueNumber = `${row.groupNumber}.1`;
+        const primaryRow = allRows.find(r => r.issueNumber === primaryIssueNumber);
+        
+        if (primaryRow && primaryRow.threadReplies && primaryRow.threadReplies.length > 0) {
+            const lsrComment = primaryRow.threadReplies.find(r => 
+                r.body && r.body.startsWith('PIC of reporting:')
+            );
+            if (lsrComment) {
+                lsrAssignment = {
+                    body: lsrComment.body,
+                    author: lsrComment.author,
+                    id: lsrComment.numericId || lsrComment.id,
+                    primaryCommentUrl: primaryRow.commentUrl
+                };
+            }
+        }
+    } else if (row.threadReplies && row.threadReplies.length > 0) {
+        // For non-duplicates, check their own thread
+        const lsrComment = row.threadReplies.find(r => 
+            r.body && r.body.startsWith('PIC of reporting:')
+        );
+        if (lsrComment) {
+            lsrAssignment = {
+                body: lsrComment.body,
+                author: lsrComment.author,
+                id: lsrComment.numericId || lsrComment.id
+            };
+        }
+    }
+    
+    const assignedTo = lsrAssignment ? lsrAssignment.body : (row.assignedTo || '');
     const rowKey = getRowKey(row);
     const encodedRowKey = encodeURIComponent(rowKey);
     const assignedToValue = escapeAttribute(assignedTo);
@@ -1061,7 +1793,34 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId) {
         dataAttrs += ` data-duplicate-group="${groupIdAttr}" data-is-duplicate="true"`;
     }
     
-    html += `<td><input type="text" class="assigned-to-input" ${dataAttrs} value="${assignedToValue}" placeholder="Assign to..."></td>`;
+    html += `<td class="assigned-to-cell">`;
+    
+    if (lsrAssignment) {
+        // Show LSR assignment (read-only, with hover for full text)
+        const shortText = lsrAssignment.body.split('\n')[0]; // First line only
+        html += `<div class="lsr-assignment" title="${escapeAttribute(lsrAssignment.body)}">`;
+        html += `<span class="lsr-text">${escapeHtml(shortText)}</span>`;
+        
+        // Edit/Remove buttons (only for LSR)
+        if (researchersConfig.lsr) {
+            html += `<button class="lsr-edit-btn" data-group="${row.groupNumber}" data-comment-url="${row.commentUrl}" data-comment-id="${lsrAssignment.id}" title="Edit assignment">✏️</button>`;
+            html += `<button class="lsr-remove-btn" data-comment-id="${lsrAssignment.id}" title="Remove assignment">🗑️</button>`;
+        }
+        
+        html += `</div>`;
+    } else {
+        html += `<input type="text" class="assigned-to-input" ${dataAttrs} value="${assignedToValue}" placeholder="Assign to...">`;
+        
+        // Add LSR assignment button for duplicate groups (only if user is LSR)
+        if (row.isDuplicate && row.groupNumber && researchersConfig.lsr) {
+            const isFirstInGroup = row.issueNumber.endsWith('.1');
+            if (isFirstInGroup) {
+                html += `<button class="lsr-assign-btn" data-group="${row.groupNumber}" data-comment-url="${row.commentUrl}" title="Assign PIC of Reporting (LSR only)">👑</button>`;
+            }
+        }
+    }
+    
+    html += `</td>`;
     
     commenters.forEach(commenter => {
         const value = row[commenter];
@@ -1078,6 +1837,21 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId) {
     
     html += '</tr>';
     return html;
+}
+
+function toggleThread(threadId, button) {
+    const threadView = document.getElementById(threadId);
+    if (!threadView) return;
+    
+    const isCollapsed = threadView.style.display === 'none';
+    
+    if (isCollapsed) {
+        threadView.style.display = 'block';
+        button.textContent = button.textContent.replace('▶', '▼');
+    } else {
+        threadView.style.display = 'none';
+        button.textContent = button.textContent.replace('▼', '▶');
+    }
 }
 
 function toggleDuplicateGroup(groupId) {
@@ -1179,13 +1953,13 @@ function renderCommentsTable(rows, commenters) {
         
         // Group rows (collapsible) - these have data-group-id
         groupRows.forEach(row => {
-            bodyHtml += renderTableRow(row, commenters, true, groupId);
+            bodyHtml += renderTableRow(row, commenters, true, groupId, rows);
         });
     });
     
     // Render regular (non-duplicate) rows after duplicates
     regularRows.forEach(row => {
-        bodyHtml += renderTableRow(row, commenters, false, null);
+        bodyHtml += renderTableRow(row, commenters, false, null, rows);
     });
     
     document.getElementById('commentsTableBody').innerHTML = bodyHtml;
@@ -1195,6 +1969,57 @@ function renderCommentsTable(rows, commenters) {
         header.addEventListener('click', function() {
             const groupId = this.dataset.headerFor;
             toggleDuplicateGroup(groupId);
+        });
+    });
+    
+    // Thread toggle buttons
+    document.querySelectorAll('.thread-toggle').forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const threadId = this.dataset.threadId;
+            toggleThread(threadId, this);
+        });
+    });
+    
+    // LSR assignment buttons
+    document.querySelectorAll('.lsr-assign-btn').forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const groupNumber = this.dataset.group;
+            const commentUrl = this.dataset.commentUrl;
+            openLSRAssignmentModal(groupNumber, commentUrl);
+        });
+    });
+    
+    // LSR edit buttons
+    document.querySelectorAll('.lsr-edit-btn').forEach(button => {
+        button.addEventListener('click', async function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const commentId = this.dataset.commentId;
+            const groupNumber = this.dataset.group;
+            const commentUrl = this.dataset.commentUrl;
+            
+            // Delete old comment first
+            if (await deleteLSRComment(commentId)) {
+                // Open modal to create new assignment
+                openLSRAssignmentModal(groupNumber, commentUrl);
+            }
+        });
+    });
+    
+    // LSR remove buttons
+    document.querySelectorAll('.lsr-remove-btn').forEach(button => {
+        button.addEventListener('click', async function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const commentId = this.dataset.commentId;
+            
+            if (confirm('Remove this PIC assignment?')) {
+                await deleteLSRComment(commentId);
+            }
         });
     });
     
@@ -1324,10 +2149,124 @@ function updateDuplicateAssignmentsByGroup(groupId, assignedTo) {
     });
 }
 
+// LSR Assignment System
+function openLSRAssignmentModal(groupNumber, primaryCommentUrl) {
+    currentLSRAssignment = { groupNumber, primaryCommentUrl };
+    
+    const modal = document.getElementById('lsrAssignmentModal');
+    const checkboxesContainer = document.getElementById('srCheckboxes');
+    
+    // Render SR checkboxes
+    let html = '';
+    researchersConfig.researchers.forEach(researcher => {
+        html += `<div class="sr-checkbox-item">`;
+        html += `<input type="checkbox" id="sr-${researcher.handle}" value="${researcher.handle}">`;
+        html += `<label for="sr-${researcher.handle}">${researcher.handle}${researcher.handle === researchersConfig.lsr ? ' ⭐' : ''}</label>`;
+        html += `</div>`;
+    });
+    
+    checkboxesContainer.innerHTML = html;
+    
+    // Clear guidance field
+    document.getElementById('lsrGuidance').value = '';
+    
+    modal.style.display = 'block';
+}
+
+async function deleteLSRComment(commentId) {
+    try {
+        const activePR = allPRs[activePRIndex];
+        const response = await fetch('/api/delete-comment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                owner: activePR.owner,
+                repo: activePR.repo,
+                prNumber: activePR.pullRequestNumber,
+                commentId: parseInt(commentId)
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert('✅ Assignment removed!');
+            loadData(true); // Force refresh to show changes
+            return true;
+        } else {
+            alert('❌ Failed to remove assignment: ' + (result.error || 'Unknown error'));
+            return false;
+        }
+    } catch (error) {
+        alert('❌ Error removing assignment: ' + error.message);
+        return false;
+    }
+}
+
+async function submitLSRAssignment() {
+    if (!currentLSRAssignment) return;
+    
+    // Get selected SRs
+    const selectedSRs = [];
+    researchersConfig.researchers.forEach(researcher => {
+        const checkbox = document.getElementById(`sr-${researcher.handle}`);
+        if (checkbox && checkbox.checked) {
+            selectedSRs.push(researcher.handle);
+        }
+    });
+    
+    if (selectedSRs.length === 0) {
+        alert('Please select at least one SR');
+        return;
+    }
+    
+    const guidance = document.getElementById('lsrGuidance').value.trim();
+    
+    // Build comment body
+    let commentBody = `PIC of reporting: ${selectedSRs.join(', ')}`;
+    if (guidance) {
+        commentBody += `\n\n${guidance}`;
+    }
+    
+    try {
+        const activePR = allPRs[activePRIndex];
+        const response = await fetch('/api/post-comment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                owner: activePR.owner,
+                repo: activePR.repo,
+                prNumber: activePR.pullRequestNumber,
+                commentUrl: currentLSRAssignment.primaryCommentUrl,
+                body: commentBody
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert('✅ Assignment posted to GitHub!');
+            document.getElementById('lsrAssignmentModal').style.display = 'none';
+            // Refresh to show the new comment
+            loadData(true);
+        } else {
+            alert('❌ Failed to post assignment: ' + (result.error || 'Unknown error'));
+        }
+    } catch (error) {
+        alert('❌ Error posting assignment: ' + error.message);
+    }
+}
+
 // Researchers management
 async function loadResearchersModal() {
     try {
-        const response = await fetch('/api/researchers');
+        if (allPRs.length === 0) {
+            alert('Please add a PR first');
+            return;
+        }
+        
+        const activePR = allPRs[activePRIndex];
+        const response = await fetch(`/api/researchers?owner=${activePR.owner}&repo=${activePR.repo}&prNumber=${activePR.pullRequestNumber}`);
         const config = await response.json();
         researchersConfig = config;
         renderResearchersList();
@@ -1448,10 +2387,21 @@ async function setLSR(handle) {
 }
 
 async function saveResearchers() {
+    if (allPRs.length === 0) {
+        throw new Error('No active PR');
+    }
+    
+    const activePR = allPRs[activePRIndex];
     const response = await fetch('/api/researchers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(researchersConfig)
+        body: JSON.stringify({
+            owner: activePR.owner,
+            repo: activePR.repo,
+            prNumber: activePR.pullRequestNumber,
+            researchers: researchersConfig.researchers,
+            lsr: researchersConfig.lsr
+        })
     });
     
     const result = await response.json();
