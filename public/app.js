@@ -1431,7 +1431,7 @@ async function loadData(forceRefresh = false) {
         document.getElementById('error').style.display = 'none';
         
         // Fetch data for the active PR
-        const url = `/api/data?prIndex=${activePRIndex}${forceRefresh ? '&forceRefresh=true' : ''}`;
+        const url = `/api/data?prIndex=${activePRIndex}${forceRefresh ? '&force=true' : ''}`;
         const response = await fetch(url);
         const data = await response.json();
         
