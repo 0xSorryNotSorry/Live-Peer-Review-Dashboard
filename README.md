@@ -1,106 +1,427 @@
 # Live Peer Review Dashboard
 
-Single-page dashboard that ingests GitHub pull request review comments and turns them into an actionable audit triage workspace. It highlights reactions, groups duplicate findings, lets you track assignments, and exports the current state to PDF.
+A real-time dashboard for managing security audit reviews. Turn GitHub PR comments into an organized workspace with duplicate detection, progress tracking, and team coordination features.
 
-> Built on top of and inspired by the open-source `audit-review-manager` project by christianvari. 🫶[^1]
+> Built with ❤️ on top of [christianvari/audit-review-manager](https://github.com/christianvari/audit-review-manager) 🫶
 
-## Prerequisites
+## Quick Start
 
-- Node.js 18+
-- A GitHub personal access token with the `repo` and `read:user` scopes
+**Prerequisites:**
+- Node.js 18 or higher
+- GitHub personal access token with `repo` and `read:user` scopes
 
-## Installation
-
+**Install:**
 ```bash
 git clone https://github.com/0xSorryNotSorry/Live-Peer-Review-Dashboard.git
 cd Live-Peer-Review-Dashboard
 npm install
 ```
 
-Create a `.env` file in this directory with:
-
+**Configure:**
+Create a `.env` file:
 ```bash
 GITHUB_TOKEN=your_github_token_here
 ```
 
-## Docker (recommended)
-
-Quickstart:
-
-```bash
-docker compose up -d --build
-```
-
-Then open `http://localhost:3000`.
-
-What gets persisted:
-- The app uses a named volume `live-peer-review-dashboard-data` mounted at `/data`
-- Files stored there:
-  - `config.json` (PR selection and report name)
-  - `researchers.json` (allowlist and lead researcher)
-  - `assignments.json` (saved assignments)
-  - `*.pdf` exports
-
-Set your GitHub token:
-- Put `GITHUB_TOKEN=...` in a `.env` file in this repo (Compose auto-loads it)
-
-Environment variables (overrides):
-- `PORT` (default `3000`)
-- `APP_DATA_DIR` (default `/data` in the container)
-- `CONFIG_DIR` (default `/data`, set `CONFIG_FILE` to override exact path)
-- `OUTPUT_DIR` (default `/data`, PDFs write here)
-## Usage
-
-Start the live dashboard:
-
+**Run:**
 ```bash
 npm run server
 ```
 
-Open `http://localhost:3000` in your browser. The page will load even without a configured PR.
+Open http://localhost:3000 in your browser.
 
-From the dashboard you can:
+---
 
-- Link a PR by pasting its URL or entering owner/repo/PR# and clicking **Sync**
-- Manage the researcher allowlist and designate a lead researcher
-- Mark duplicate findings by adding a comment reply in the GitHub review thread with the format: `DUP <full-comment-url>` 
-- Assign findings and add ad-hoc columns; assignments and custom columns persist locally per PR
-- Generate a PDF snapshot of the current table with **Generate PDF**
+## Docker Setup (Recommended for Production)
 
-### Marking Duplicates
-
-To mark a finding as a duplicate, **add a reply comment** in the GitHub review thread (not the original issue body) with one of these formats:
-
-- `DUP <https://github.com/owner/repo/pull/123#discussion_r456789>`
-- `dup of <https://github.com/owner/repo/pull/123#discussion_r456789>`
-
-**Important:**
-- The DUP marker must be in a **reply comment** within the thread, not the original issue body
-- Use proper spacing: `DUP <url>` 
-- The app scans all comments in each thread and uses the **last** DUP marker found
-- Transitive duplicates are automatically grouped: if A→B and C→B, then A, B, and C all appear in the same duplicate group
-- To remove a duplicate relationship, edit the GitHub comment to delete the DUP marker, then refresh the dashboard
-
-## Reactions & Comment Filtering
-
-- Every review row shows who reacted with `👍` or `👎`; only GitHub review reactions are counted and displayed in the reviewer's column
-- A resolved thread that carries a `🚀` reaction renders as `✅` in the **Reported** column; resolved threads without the rocket appear as "not reported yet"
-- Rows turn green when `👍` coverage reaches at least two thirds of reviewers, and red when `👎` reaches two thirds of the group (excluding the proposer)
-- Reaction coverage only considers handles currently in the researcher allowlist; add everyone you want counted via **Manage Researchers** or clear the filter to include all commenters
-- If neither threshold is met the background stays neutral, so color always reflects consensus—green for broad agreement, red for broad rejection, and default for mixed or low-signal feedback
-
-### CLI PDF export (optional)
-
-You can also generate a PDF from the command line:
-
+**Quick start:**
 ```bash
-node main.js --config-path=./config.example.json
+docker compose up -d --build
 ```
 
-Provide your own config file or use the dashboard first—the server will create `config.json` automatically when you sync a PR.
+**What gets saved:**
+- PR configurations
+- Researcher lists (per-PR)
+- Assignments
+- PDF exports
 
-## Resetting Local State
+Everything persists in a Docker volume named `live-peer-review-dashboard-data`.
 
-The app stores the most recent PR configuration, researcher list, assignments, and custom columns on your machine. Delete `config.json`, `assignments.json`, `researchers.json`, or clear your browser storage if you want a completely fresh start.
+**Environment variables:**
+- `PORT` - Server port (default: 3000)
+- `APP_DATA_DIR` - Data storage location (default: `/data` in container)
+- `GITHUB_TOKEN` - Your GitHub token (required)
 
-[^1]: Original project: [christianvari/audit-review-manager](https://github.com/christianvari/audit-review-manager)
+---
+
+## Core Features
+
+<details>
+<summary><b>Multi-PR Management</b></summary>
+
+### Managing Multiple PRs
+
+**Add a PR:**
+1. Paste GitHub PR URL in the top input, or
+2. Enter owner/repo/PR# manually
+3. Click "Sync"
+
+**Switch between PRs:**
+- Click PR tabs at the top
+- Each PR has independent settings
+- Dashboard remembers which PR you were viewing
+
+**Customize tab names:**
+- Double-click any tab
+- Enter a custom label (e.g., "X Audit")
+- Default shows: `repo#123`
+
+**Manage PRs:**
+- Click "⚙️ Manage PRs" button
+- Add PRs via URL or manual input
+- Remove PRs you no longer need
+
+</details>
+
+<details>
+<summary><b>Duplicate Detection</b></summary>
+
+### How to Mark Duplicates
+
+Add a reply comment to any thread in GitHub:
+```
+DUP <https://github.com/owner/repo/pull/123#discussion_r456789>
+```
+
+Or use the short format:
+```
+dup of #discussion_r456789
+```
+
+**Rules:**
+- Must be a **reply comment** (not the original issue)
+- App scans all replies in each thread
+- Last DUP marker wins if multiple exist
+- Transitive grouping: If A→B and C→B, then A, B, C are one group
+
+**Remove duplicates:**
+- Edit the GitHub comment to delete the DUP marker
+- Refresh the dashboard
+
+**In the dashboard:**
+- Duplicate groups show as D-1, D-2, etc.
+- Click group header to collapse/expand
+- First duplicate (D-X.1) stays visible when collapsed
+
+</details>
+
+<details>
+<summary><b>Researcher Management</b></summary>
+
+### Setting Up Your Team
+
+**Add researchers:**
+1. Click "👥 Manage Researchers"
+2. Enter GitHub handle
+3. Click "Add"
+
+**Set Lead Security Researcher (LSR):**
+- Click "Set as LSR" next to a researcher
+- LSR gets special permissions (PIC assignments)
+
+**Per-PR researchers:**
+- Each PR can have different researchers
+- Switch PR tabs to see that PR's team
+- Completely independent configurations
+
+**Filtering:**
+- Only shows issues from configured researchers
+- Add everyone you want to see
+- Or clear the list to see all issues
+
+</details>
+
+<details>
+<summary><b>Reactions & Progress Tracking</b></summary>
+
+### How Reactions Work
+
+**Supported emojis:**
+- 👍 Thumbs up (approve)
+- 👎 Thumbs down (reject)
+- 👀 Eyes (reviewed, neutral)
+- 🚀 Rocket (reported - thread must be resolved)
+
+**Row colors:**
+- **Green**: 2/3+ of team gave 👍
+- **Red**: 2/3+ of team gave 👎
+- **White**: No consensus yet
+
+**Progress cards:**
+
+**Review Progress (green pie chart):**
+- Shows: Issues reviewed (green or red rows)
+- Formula: Reviewed / Total issues
+
+**Reporting Progress (blue pie chart):**
+- Shows: Green issues with 🚀 emoji (resolved threads only)
+- Formula: Reported / Green issues
+- Excludes: Red issues, Won't Report, Partial
+
+**Reaction Completion Stats:**
+- Shows each researcher's completion percentage
+- Counts 👍, 👎, and 👀 as "reviewed"
+- Formula: Reacted / Total comments (excluding own)
+
+</details>
+
+<details>
+<summary><b>Issue Status Management</b></summary>
+
+### Won't Report & Partial Issues
+
+**Status dropdown in "Reported" column:**
+- **—** (default): Normal flow, needs 👍 majority + 🚀
+- **Won't Report**: Excluded from reporting (false positive, etc.)
+- **Partial**: Merged into another issue
+
+**Partial issues:**
+- Select "Partial" from dropdown
+- Enter issue number (e.g., `#10`)
+- Red border if left empty
+- Tracks which issue covers this finding
+
+**Effect on progress:**
+- Won't Report and Partial excluded from reporting denominator
+- Helps reach 100% when some issues aren't reportable
+
+</details>
+
+<details>
+<summary><b>LSR Assignment System</b></summary>
+
+### Assigning PIC of Reporting (LSR Only)
+
+**For duplicate groups:**
+1. Find the 👑 button in "Assigned To" column (appears on primary duplicate in each group to coordinate reporting and ensure balanced coverage)
+2. Click to open assignment modal
+3. Select one or more SRs (checkboxes)
+4. Add optional guidance
+5. Click "Post Assignment"
+
+**What happens:**
+- Posts comment to GitHub: `PIC of reporting: Alice, Bob`
+- With guidance: Adds your notes below
+- Shows in "Assigned To" for entire group
+- Everyone gets GitHub notification
+
+**Edit/Remove:**
+- ✏️ Edit: Deletes old comment, opens modal
+- 🗑️ Remove: Deletes the GitHub comment
+
+</details>
+
+<details>
+<summary><b>Notifications</b></summary>
+
+### Real-Time Activity Tracking
+
+**Notification types:**
+- 💬 Comments: "Alice commented on #5"
+- 👍 Reactions: "Bob reacted with 👍"
+- ✅ Resolutions: "Thread #7 was resolved"
+
+**Notification panel:**
+- Click 🔔 button to open
+- Shows all activity chronologically
+- Click notification to scroll to that issue
+- Unread (yellow) → Read (gray)
+
+**Controls:**
+- ✓ Mark All Read
+- ↻ Mark All Unread
+- Badge shows unread count only
+
+**Per-PR tracking:**
+- Each PR has independent notifications
+- Persists across sessions
+
+</details>
+
+<details>
+<summary><b>Table Features</b></summary>
+
+### Working with the Table
+
+**Collapsible threads:**
+- Click "▶ X replies" to expand conversation
+- See all comments and reactions
+- Chat-style UI with timestamps
+
+**Filtering:**
+- **Proposer**: Show issues from specific researcher
+- **Resolution**: Resolved / Not Resolved / All
+- **Reported**: Has 🚀 / No 🚀 / All
+- Click "Clear Filters" to reset
+
+**Custom columns:**
+- Click "➕ Add Column" for custom fields
+- Double-click column header to rename
+- Data persists per-PR
+- Click "➖ Remove Column" to delete last column
+
+**Assignments:**
+- Type in "Assigned To" column
+- Auto-saves on blur
+- Duplicate groups sync assignments
+
+**Collapsible duplicate groups:**
+- Click group header to collapse
+- First duplicate stays visible
+- Blue separator when collapsed
+
+</details>
+
+<details>
+<summary><b>Refresh & Caching</b></summary>
+
+### Keeping Data Fresh
+
+**Refresh options:**
+- **🔄 Refresh Now**: Uses 30-second cache (saves API calls)
+- **⚡ Force Refresh**: Bypasses cache (always latest)
+- **Auto-refresh**: 1min / 5min / 10min intervals (default: Manual)
+  - ⚠️ **Note:** Auto-refresh consumes GitHub API rate limit faster. Use Manual mode and refresh when needed to conserve API calls.
+
+**Floating refresh button:**
+- Drag anywhere on screen
+- Click: Regular refresh
+- Shift+Click: Force refresh
+- Shows "Shift = ⚡" hint
+
+**Caching:**
+- 30-second server-side cache per PR
+- Reduces GitHub API usage by ~70%
+- Fresh enough for active reviews
+- Force refresh when you need absolute latest
+
+**Go to top button:**
+- Appears when scrolling down
+- Click to scroll to top smoothly
+
+</details>
+
+<details>
+<summary><b>PDF Export</b></summary>
+
+### Generating Reports
+
+**From dashboard:**
+- Click "📄 Generate PDF"
+- Downloads current state as PDF
+- Includes all visible data
+
+**From command line:**
+```bash
+node main.js --config-path=./config.json
+```
+
+**What's included:**
+- All comments and reactions
+- Duplicate groups
+- Reaction completion stats
+- Assignments
+
+</details>
+
+---
+
+## Tips & Tricks
+
+**Keyboard shortcuts:**
+- `Shift + Click` floating refresh = Force refresh
+- Double-click PR tab = Rename tab
+- Double-click column header = Rename column
+
+**Best practices:**
+- Configure researchers per PR for accurate filtering
+- Use "Won't Report" for false positives
+- Use "Partial" for findings merged into other issues
+- Mark duplicates early to reduce clutter
+- Set LSR for team coordination
+
+**Troubleshooting:**
+- Not seeing updates? Click "⚡ Force Refresh"
+- Wrong PR showing? Check active tab at top
+- Missing researchers? Configure them per PR
+- API rate limit? Wait or use caching (30s)
+
+---
+
+## Local Development
+
+**Start server:**
+```bash
+npm run server
+```
+
+**Stop server:**
+```bash
+pkill -f "node server.js"
+```
+
+**View logs:**
+```bash
+tail -f server.log
+```
+
+**Data storage:**
+- `config.json` - PR configurations
+- `researchers-{owner}-{repo}-{pr}.json` - Per-PR researchers
+- `assignments.json` - Issue assignments
+- `*.pdf` - Generated reports
+
+**Clear data:**
+Delete the JSON files or clear browser localStorage.
+
+---
+
+## Architecture
+
+**Frontend:**
+- Single-page app (vanilla JavaScript)
+- Real-time updates via polling
+- Per-PR state management (localStorage)
+- Responsive design with dark mode
+
+**Backend:**
+- Express.js server
+- GitHub GraphQL + REST API
+- 30-second caching layer
+- Puppeteer for PDF generation
+
+**Features:**
+- Multi-PR support with tabs
+- Collapsible duplicate groups
+- Thread conversation view
+- Smart notifications
+- LSR assignment system
+- Table filtering
+- Progress tracking
+
+---
+
+## Contributing
+
+Issues and PRs welcome! This is an active project used in real security audits.
+
+---
+
+## License
+
+MIT License - See LICENSE file
+
+---
+
+[^1]: Original project: [christianvari/audit-review-manager](https://github.com/christianvari/audit-review-manager) ↩
+
