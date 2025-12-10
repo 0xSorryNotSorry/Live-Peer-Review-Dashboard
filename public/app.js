@@ -1172,12 +1172,19 @@ function setupEventListeners() {
     
     // Table filters
     const filterProposer = document.getElementById('filterProposer');
+    const filterReviewStatus = document.getElementById('filterReviewStatus');
     const filterResolution = document.getElementById('filterResolution');
     const filterReported = document.getElementById('filterReported');
     const clearFiltersBtn = document.getElementById('clearFilters');
     
     if (filterProposer) {
         filterProposer.addEventListener('change', () => {
+            renderCommentsTable(latestRows, latestCommenters);
+        });
+    }
+    
+    if (filterReviewStatus) {
+        filterReviewStatus.addEventListener('change', () => {
             renderCommentsTable(latestRows, latestCommenters);
         });
     }
@@ -1197,6 +1204,7 @@ function setupEventListeners() {
     if (clearFiltersBtn) {
         clearFiltersBtn.addEventListener('click', () => {
             if (filterProposer) filterProposer.value = 'all';
+            if (filterReviewStatus) filterReviewStatus.value = 'all';
             if (filterResolution) filterResolution.value = 'all';
             if (filterReported) filterReported.value = 'all';
             renderCommentsTable(latestRows, latestCommenters);
@@ -1961,6 +1969,7 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
 // Apply table filters
 function applyTableFilters(rows) {
     const proposerFilter = document.getElementById('filterProposer')?.value || 'all';
+    const reviewStatusFilter = document.getElementById('filterReviewStatus')?.value || 'all';
     const resolutionFilter = document.getElementById('filterResolution')?.value || 'all';
     const reportedFilter = document.getElementById('filterReported')?.value || 'all';
     
@@ -1968,6 +1977,24 @@ function applyTableFilters(rows) {
         // Proposer filter
         if (proposerFilter !== 'all' && row.proposer !== proposerFilter) {
             return false;
+        }
+        
+        // Review status filter (green or red row)
+        if (reviewStatusFilter !== 'all') {
+            const totalCommenters = latestCommenters.length;
+            const thumbsUpCount = row.thumbsUpCount || 0;
+            const thumbsDownCount = row.thumbsDownCount || 0;
+            
+            const isGreen = (thumbsUpCount + 1) >= Math.ceil((2 / 3) * totalCommenters);
+            const isRed = thumbsDownCount >= Math.ceil((2 / 3) * (totalCommenters - 1));
+            const isReviewed = isGreen || isRed;
+            
+            if (reviewStatusFilter === 'reviewed' && !isReviewed) {
+                return false;
+            }
+            if (reviewStatusFilter === 'not-reviewed' && isReviewed) {
+                return false;
+            }
         }
         
         // Resolution filter
