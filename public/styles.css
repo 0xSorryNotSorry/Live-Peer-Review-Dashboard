@@ -685,6 +685,75 @@ body.dark-mode .lsr-text {
     color: #ffc107;
 }
 
+/* Report Status Dropdown */
+.reported-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.reported-badge {
+    font-size: 18px;
+}
+
+.report-status-dropdown {
+    padding: 4px 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 12px;
+    background: white;
+    cursor: pointer;
+}
+
+.report-status-dropdown option[value="wont-report"] {
+    color: #dc3545;
+}
+
+.report-status-dropdown option[value="partial"] {
+    color: #ffc107;
+}
+
+.partial-issue-input {
+    padding: 4px;
+    border: 2px solid #ffc107;
+    border-radius: 4px;
+    font-size: 12px;
+    transition: border-color 0.3s;
+}
+
+.partial-issue-input:focus {
+    outline: none;
+    border-color: #007bff;
+}
+
+.partial-issue-input.error {
+    border-color: #dc3545;
+    animation: shake 0.3s;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+}
+
+body.dark-mode .report-status-dropdown {
+    background: #374151;
+    border-color: #4b5563;
+    color: #e5e7eb;
+}
+
+body.dark-mode .partial-issue-input {
+    background: #1f2937;
+    border-color: #ffc107;
+    color: #e5e7eb;
+}
+
+body.dark-mode .partial-issue-input:focus {
+    border-color: #7CFC00;
+}
+
 .extra-column-input {
     width: 100%;
     padding: 4px 8px;

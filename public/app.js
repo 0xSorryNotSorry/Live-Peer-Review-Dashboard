@@ -19,6 +19,7 @@ const SEEN_COMMENTS_PREFIX = 'arm-seen-comments:';
 const RESOLUTION_STATES_PREFIX = 'arm-resolution-states:';
 const LAST_SEEN_TIMESTAMP_PREFIX = 'arm-last-seen-timestamp:';
 const ACTIVE_PR_KEY = 'arm-active-pr';
+const REPORT_STATUS_PREFIX = 'arm-report-status:';
 
 function escapeAttribute(value) {
     if (value === undefined || value === null) return '';
@@ -112,6 +113,29 @@ function saveResolutionStates(statesMap) {
         localStorage.setItem(key, JSON.stringify(obj));
     } catch (error) {
         console.error('Failed to save resolution states:', error);
+    }
+}
+
+// Load report statuses from localStorage
+function loadReportStatuses() {
+    try {
+        const key = getStorageKey(REPORT_STATUS_PREFIX);
+        const data = localStorage.getItem(key);
+        return data ? JSON.parse(data) : {};
+    } catch (error) {
+        return {};
+    }
+}
+
+// Save report status
+function saveReportStatus(commentUrl, status, partialIssue = '') {
+    try {
+        const statuses = loadReportStatuses();
+        statuses[commentUrl] = { status, partialIssue };
+        const key = getStorageKey(REPORT_STATUS_PREFIX);
+        localStorage.setItem(key, JSON.stringify(statuses));
+    } catch (error) {
+        console.error('Failed to save report status:', error);
     }
 }
 
@@ -1396,9 +1420,17 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
     let greenIssuesCount = 0; // Count of issues worth reporting (green rows)
     let reportedCount = 0;
     
+    // Load report statuses
+    const reportStatuses = loadReportStatuses();
+    
     // Calculate review and report progress
     uniqueIssues.forEach((issue, key) => {
         const issueRows = issue.rows;
+        
+        // Check status of primary issue (for groups, check D-X.1)
+        const primaryRow = issueRows[0];
+        const statusData = reportStatuses[primaryRow.commentUrl] || {};
+        const status = statusData.status || 'default';
         
         // Check if ANY row in this issue/group has been reviewed (green OR red)
         // Green = majority thumbs up, Red = majority thumbs down
@@ -1429,7 +1461,10 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
             return isGreen;
         });
         
-        if (isGreenIssue) {
+        // For reporting progress, exclude "Won't Report" and "Partial" from denominator
+        const shouldCountForReporting = status !== 'wont-report' && status !== 'partial';
+        
+        if (isGreenIssue && shouldCountForReporting) {
             greenIssuesCount++;
         }
         
@@ -1446,7 +1481,7 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
             return isGreen && hasRocket;
         });
         
-        if (hasReported) {
+        if (hasReported && shouldCountForReporting) {
             reportedCount++;
         }
     });
@@ -1655,6 +1690,12 @@ function renderDuplicateAssignments(assignments, commenters) {
 }
 
 function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
+    // Load report status from localStorage
+    const reportStatuses = loadReportStatuses();
+    const statusData = reportStatuses[row.commentUrl] || {};
+    row.reportStatus = statusData.status || 'default';
+    row.partialIssue = statusData.partialIssue || '';
+    
     const thumbsUpCount = row.thumbsUpCount;
     const thumbsDownCount = row.thumbsDownCount;
     const totalCommenters = commenters.length;
@@ -1752,8 +1793,26 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
     
     html += `</td>`;
     
-    // Reported
-    html += `<td>${row.Reported || ''}</td>`;
+    // Reported with status dropdown
+    html += `<td class="reported-cell">`;
+    html += `<span class="reported-badge">${row.Reported || ''}</span>`;
+    
+    // Status dropdown
+    const currentStatus = row.reportStatus || 'default';
+    const partialIssue = row.partialIssue || '';
+    
+    html += `<select class="report-status-dropdown" data-comment-url="${row.commentUrl}" data-issue-number="${row.issueNumber}">`;
+    html += `<option value="default" ${currentStatus === 'default' ? 'selected' : ''}>—</option>`;
+    html += `<option value="wont-report" ${currentStatus === 'wont-report' ? 'selected' : ''}>Won't Report</option>`;
+    html += `<option value="partial" ${currentStatus === 'partial' ? 'selected' : ''}>Partial</option>`;
+    html += `</select>`;
+    
+    // Partial issue input (only show if Partial selected)
+    if (currentStatus === 'partial') {
+        html += `<input type="text" class="partial-issue-input" data-comment-url="${row.commentUrl}" value="${partialIssue}" placeholder="#10" style="width: 50px; margin-left: 5px;">`;
+    }
+    
+    html += `</td>`;
     
     // Duplicate
     if (row.isDuplicate) {
@@ -2046,6 +2105,77 @@ function renderCommentsTable(rows, commenters) {
             
             if (confirm('Remove this PIC assignment?')) {
                 await deleteLSRComment(commentId);
+            }
+        });
+    });
+    
+    // Report status dropdowns
+    document.querySelectorAll('.report-status-dropdown').forEach(select => {
+        select.addEventListener('change', function() {
+            const commentUrl = this.dataset.commentUrl;
+            const status = this.value;
+            const issueNumber = this.dataset.issueNumber;
+            
+            if (status === 'partial') {
+                // Check if input already exists
+                let input = this.parentElement.querySelector('.partial-issue-input');
+                
+                if (!input) {
+                    // Check if there's already a saved partial issue
+                    const reportStatuses = loadReportStatuses();
+                    const existingStatus = reportStatuses[commentUrl];
+                    const existingPartialIssue = existingStatus?.partialIssue || '';
+                    
+                    // Show input for partial issue number
+                    input = document.createElement('input');
+                    input.type = 'text';
+                    input.className = 'partial-issue-input';
+                    input.dataset.commentUrl = commentUrl;
+                    input.placeholder = '#10';
+                    input.value = existingPartialIssue;
+                    input.style.width = '50px';
+                    input.style.marginLeft = '5px';
+                    
+                    this.parentElement.appendChild(input);
+                    
+                    input.addEventListener('input', function() {
+                        // Remove red border when typing
+                        this.style.borderColor = '#ffc107';
+                        this.style.borderWidth = '2px';
+                    });
+                    
+                    input.addEventListener('blur', function() {
+                        const partialIssue = this.value.trim();
+                        
+                        if (!partialIssue) {
+                            // Show red border
+                            this.style.borderColor = '#dc3545';
+                            this.style.borderWidth = '2px';
+                            
+                            // Don't remove input, let user try again
+                            return;
+                        }
+                        
+                        saveReportStatus(commentUrl, status, partialIssue);
+                        
+                        // Update progress without full reload
+                        const reportStatuses = loadReportStatuses();
+                        renderProgressCharts(latestRows, latestRows.duplicateGroups || [], latestCommenters);
+                    });
+                }
+                
+                input.focus();
+            } else {
+                // Remove partial input if exists
+                const existingInput = this.parentElement.querySelector('.partial-issue-input');
+                if (existingInput) {
+                    existingInput.remove();
+                }
+                
+                saveReportStatus(commentUrl, status);
+                
+                // Update progress without full reload
+                renderProgressCharts(latestRows, latestRows.duplicateGroups || [], latestCommenters);
             }
         });
     });
