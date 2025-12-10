@@ -161,12 +161,15 @@ dup of #discussion_r456789
 
 **Review Progress (green pie chart):**
 - Shows: Issues reviewed (green or red rows)
-- Formula: Reviewed / Total issues
+- Formula: Reviewed / Reviewable issues
+- Excludes from denominator: Won't Report, Partial
+- Why: Issues marked "Won't Report" don't need review
 
 **Reporting Progress (blue pie chart):**
 - Shows: Green issues with 🚀 emoji (resolved threads only)
 - Formula: Reported / Green issues
-- Excludes: Red issues, Won't Report, Partial
+- Excludes from denominator: Red issues, Won't Report, Partial
+- Why: Only counts issues that will actually be reported
 
 **Reaction Completion Stats:**
 - Shows each researcher's completion percentage
@@ -260,6 +263,7 @@ dup of #discussion_r456789
 
 **Filtering:**
 - **Proposer**: Show issues from specific researcher
+- **Review Status**: Reviewed (Green/Red) / Not Reviewed / All
 - **Resolution**: Resolved / Not Resolved / All
 - **Reported**: Has 🚀 / No 🚀 / All
 - Click "Clear Filters" to reset

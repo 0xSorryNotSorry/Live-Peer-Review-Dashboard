@@ -1463,6 +1463,7 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
     
     // Load report statuses
     const reportStatuses = loadReportStatuses();
+    let totalReviewableIssues = 0; // Issues that need review (excludes Won't Report and Partial)
     
     // Calculate review and report progress
     uniqueIssues.forEach((issue, key) => {
@@ -1472,6 +1473,13 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
         const primaryRow = issueRows[0];
         const statusData = reportStatuses[primaryRow.commentUrl] || {};
         const status = statusData.status || 'default';
+        
+        // Skip Won't Report and Partial from review progress too
+        const shouldCountForReview = status !== 'wont-report' && status !== 'partial';
+        
+        if (shouldCountForReview) {
+            totalReviewableIssues++;
+        }
         
         // Check if ANY row in this issue/group has been reviewed (green OR red)
         // Green = majority thumbs up, Red = majority thumbs down
@@ -1490,7 +1498,7 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
             return isGreen || isRed;
         });
         
-        if (hasReviewed) {
+        if (hasReviewed && shouldCountForReview) {
             reviewedCount++;
         }
         
@@ -1528,11 +1536,12 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
     });
     
     // Calculate percentages
-    const reviewPercentage = totalIssues > 0 ? Math.round((reviewedCount / totalIssues) * 100) : 0;
-    // Reporting percentage: reported / green issues (not all issues)
+    // Review: reviewed / reviewable (excludes Won't Report and Partial)
+    const reviewPercentage = totalReviewableIssues > 0 ? Math.round((reviewedCount / totalReviewableIssues) * 100) : 0;
+    // Reporting: reported / green issues (excludes Won't Report and Partial)
     const reportPercentage = greenIssuesCount > 0 ? Math.round((reportedCount / greenIssuesCount) * 100) : 0;
     
-    console.log(`📊 Progress: Total=${totalIssues}, Reviewed=${reviewedCount} (${reviewPercentage}%), Green=${greenIssuesCount}, Reported=${reportedCount}/${greenIssuesCount} (${reportPercentage}%)`);
+    console.log(`📊 Progress: Total=${totalIssues}, Reviewable=${totalReviewableIssues}, Reviewed=${reviewedCount} (${reviewPercentage}%), Green=${greenIssuesCount}, Reported=${reportedCount}/${greenIssuesCount} (${reportPercentage}%)`);
     
     // Update pie charts
     updatePieChart('reviewProgress', 'reviewPercentage', reviewPercentage, '#28a745');
@@ -1540,7 +1549,7 @@ function renderProgressCharts(rows, duplicateGroups, commenters) {
     
     // Update labels
     document.getElementById('reviewCompleted').textContent = reviewedCount;
-    document.getElementById('reviewTotal').textContent = totalIssues;
+    document.getElementById('reviewTotal').textContent = totalReviewableIssues; // Show reviewable issues, not total
     document.getElementById('reportCompleted').textContent = reportedCount;
     document.getElementById('reportTotal').textContent = greenIssuesCount; // Show green issues, not total
 }
