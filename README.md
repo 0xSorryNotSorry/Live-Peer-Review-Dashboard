@@ -176,6 +176,12 @@ dup of #discussion_r456789
 - Counts 👍, 👎, and 👀 as "reviewed"
 - Formula: Reacted / Total comments (excluding own)
 
+**Stats Cards:**
+- **Reported ✅**: Green issues with 🚀 (resolved + approved)
+- **Non-Reported ❌**: Resolved issues without 🚀 or red issues
+- **Pending**: Unresolved issues still being discussed
+- All exclude Won't Report and Partial from counts
+
 </details>
 
 <details>

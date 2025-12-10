@@ -1625,8 +1625,22 @@ function renderStats(stats, duplicateGroups, rows, commenters) {
     let nonReported = 0;
     let pending = 0;
     
+    // Load report statuses
+    const reportStatuses = loadReportStatuses();
+    
     uniqueIssues.forEach((issue) => {
         const issueRows = issue.rows;
+        
+        // Check status of primary issue
+        const primaryRow = issueRows[0];
+        const statusData = reportStatuses[primaryRow.commentUrl] || {};
+        const status = statusData.status || 'default';
+        
+        // Skip Won't Report and Partial from all stats
+        if (status === 'wont-report' || status === 'partial') {
+            return;
+        }
+        
         const anyResolved = issueRows.some(r => r.isResolved);
         const anyHasRocket = issueRows.some(r => r.Reported === '✅');
         
