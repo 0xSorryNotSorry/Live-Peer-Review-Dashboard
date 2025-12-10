@@ -1170,6 +1170,39 @@ function setupEventListeners() {
         });
     }
     
+    // Table filters
+    const filterProposer = document.getElementById('filterProposer');
+    const filterResolution = document.getElementById('filterResolution');
+    const filterReported = document.getElementById('filterReported');
+    const clearFiltersBtn = document.getElementById('clearFilters');
+    
+    if (filterProposer) {
+        filterProposer.addEventListener('change', () => {
+            renderCommentsTable(latestRows, latestCommenters);
+        });
+    }
+    
+    if (filterResolution) {
+        filterResolution.addEventListener('change', () => {
+            renderCommentsTable(latestRows, latestCommenters);
+        });
+    }
+    
+    if (filterReported) {
+        filterReported.addEventListener('change', () => {
+            renderCommentsTable(latestRows, latestCommenters);
+        });
+    }
+    
+    if (clearFiltersBtn) {
+        clearFiltersBtn.addEventListener('click', () => {
+            if (filterProposer) filterProposer.value = 'all';
+            if (filterResolution) filterResolution.value = 'all';
+            if (filterReported) filterReported.value = 'all';
+            renderCommentsTable(latestRows, latestCommenters);
+        });
+    }
+    
     // PR Management Modal
     const managePRsBtn = document.getElementById('managePRs');
     if (managePRsBtn) {
@@ -1925,6 +1958,38 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
     return html;
 }
 
+// Apply table filters
+function applyTableFilters(rows) {
+    const proposerFilter = document.getElementById('filterProposer')?.value || 'all';
+    const resolutionFilter = document.getElementById('filterResolution')?.value || 'all';
+    const reportedFilter = document.getElementById('filterReported')?.value || 'all';
+    
+    return rows.filter(row => {
+        // Proposer filter
+        if (proposerFilter !== 'all' && row.proposer !== proposerFilter) {
+            return false;
+        }
+        
+        // Resolution filter
+        if (resolutionFilter === 'resolved' && !row.isResolved) {
+            return false;
+        }
+        if (resolutionFilter === 'not-resolved' && row.isResolved) {
+            return false;
+        }
+        
+        // Reported filter
+        if (reportedFilter === 'reported' && row.Reported !== '✅') {
+            return false;
+        }
+        if (reportedFilter === 'not-reported' && row.Reported === '✅') {
+            return false;
+        }
+        
+        return true;
+    });
+}
+
 function toggleThread(threadId, button) {
     const threadView = document.getElementById(threadId);
     if (!threadView) return;
@@ -1986,6 +2051,21 @@ function renderCommentsTable(rows, commenters) {
             extraColumnData[column.id] = {};
         }
     });
+    
+    // Populate proposer filter dropdown
+    const proposerFilter = document.getElementById('filterProposer');
+    if (proposerFilter) {
+        const currentValue = proposerFilter.value;
+        let options = '<option value="all">All</option>';
+        commenters.forEach(commenter => {
+            options += `<option value="${commenter}">${commenter}</option>`;
+        });
+        proposerFilter.innerHTML = options;
+        proposerFilter.value = currentValue || 'all';
+    }
+    
+    // Apply filters
+    const filteredRows = applyTableFilters(rows);
 
     // Headers
     let headHtml = '<tr><th>#</th><th>Comment</th><th>Reported</th><th>Duplicate</th><th>Assigned To</th>';
@@ -2006,7 +2086,7 @@ function renderCommentsTable(rows, commenters) {
     const duplicateGroups = new Map(); // groupNumber -> [rows]
     const regularRows = [];
     
-    rows.forEach(row => {
+    filteredRows.forEach(row => {
         if (row.isDuplicate && row.groupNumber) {
             if (!duplicateGroups.has(row.groupNumber)) {
                 duplicateGroups.set(row.groupNumber, []);
