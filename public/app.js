@@ -20,6 +20,7 @@ const RESOLUTION_STATES_PREFIX = 'arm-resolution-states:';
 const LAST_SEEN_TIMESTAMP_PREFIX = 'arm-last-seen-timestamp:';
 const ACTIVE_PR_KEY = 'arm-active-pr';
 const REPORT_STATUS_PREFIX = 'arm-report-status:';
+const MY_REACTIONS_PREFIX = 'arm-my-reactions:';
 
 function escapeAttribute(value) {
     if (value === undefined || value === null) return '';
@@ -1857,8 +1858,9 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
     
     html += `</td>`;
     
-    // Reported with status dropdown
+    // Reported with status dropdown and action buttons
     html += `<td class="reported-cell">`;
+    html += `<div class="reported-top">`;
     html += `<span class="reported-badge">${row.Reported || ''}</span>`;
     
     // Status dropdown
@@ -1876,6 +1878,21 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
         html += `<input type="text" class="partial-issue-input" data-comment-url="${row.commentUrl}" value="${partialIssue}" placeholder="#10" style="width: 50px; margin-left: 5px;">`;
     }
     
+    html += `</div>`;
+    
+    // Action buttons (reactions and resolve)
+    // Note: We don't track "current user", so buttons show aggregate state
+    // Active state based on whether the action has been taken (by anyone)
+    html += `<div class="action-buttons">`;
+    
+    const hasRocket = row.Reported === '✅';
+    
+    html += `<button class="action-btn" data-comment-url="${row.commentUrl}" data-action="thumbs-up" title="Add/Remove thumbs up">👍</button>`;
+    html += `<button class="action-btn" data-comment-url="${row.commentUrl}" data-action="thumbs-down" title="Add/Remove thumbs down">👎</button>`;
+    html += `<button class="action-btn" data-comment-url="${row.commentUrl}" data-action="eyes" title="Add/Remove eyes">👀</button>`;
+    html += `<button class="action-btn resolve-btn ${hasRocket ? 'active' : ''}" data-comment-url="${row.commentUrl}" data-action="resolve" data-is-resolved="${row.isResolved}" title="${hasRocket ? 'Unmark as reported' : 'Mark as reported'}">🚀</button>`;
+    
+    html += `</div>`;
     html += `</td>`;
     
     // Duplicate
