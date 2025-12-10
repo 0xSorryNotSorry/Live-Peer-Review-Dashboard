@@ -269,6 +269,8 @@ dup of #discussion_r456789
 
 **Filtering:**
 - **Proposer**: Show issues from specific researcher
+  - **"Not Me"**: Filter out your own issues (shows only others' findings)
+  - Uses GitHub token owner as "me" (automatically detected)
 - **Review Status**: Reviewed (Green/Red) / Not Reviewed / All
 - **Resolution**: Resolved / Not Resolved / All
 - **Reported**: Has 🚀 / No 🚀 / All

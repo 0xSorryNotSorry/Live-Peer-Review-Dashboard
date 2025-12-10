@@ -13,6 +13,24 @@ const octokit = new Octokit({
     auth: process.env.GITHUB_TOKEN,
 });
 
+// Get authenticated user (token owner)
+let authenticatedUser = null;
+async function getAuthenticatedUser() {
+    if (!authenticatedUser) {
+        try {
+            const { data } = await octokit.rest.users.getAuthenticated();
+            authenticatedUser = data.login;
+            console.log(`🔑 Authenticated as: ${authenticatedUser}`);
+        } catch (error) {
+            console.error('Failed to get authenticated user:', error.message);
+        }
+    }
+    return authenticatedUser;
+}
+
+// Fetch authenticated user on startup
+getAuthenticatedUser();
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -143,6 +161,17 @@ async function saveResearchers(owner, repo, prNumber, researchers) {
     const filename = `researchers-${owner}-${repo}-${prNumber}.json`;
     await fs.writeFile(dataPath(filename), JSON.stringify(researchers, null, 2));
 }
+
+// API: Get authenticated user (token owner)
+app.get("/api/me", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser();
+        res.json({ username: user });
+    } catch (error) {
+        console.error("Error getting authenticated user:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // API: Get PR data
 app.get("/api/data", async (req, res) => {

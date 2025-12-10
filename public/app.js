@@ -12,6 +12,22 @@ let activePRIndex = 0;
 let notifications = [];
 let lastSeenComments = new Set();
 let currentLSRAssignment = null; // Stores {groupNumber, primaryCommentUrl}
+let authenticatedUser = null; // GitHub token owner
+
+// Fetch authenticated user (token owner)
+async function fetchAuthenticatedUser() {
+    try {
+        const response = await fetch('/api/me');
+        const data = await response.json();
+        authenticatedUser = data.username;
+        console.log(`🔑 Authenticated as: ${authenticatedUser}`);
+    } catch (error) {
+        console.error('Failed to fetch authenticated user:', error);
+    }
+}
+
+// Initialize authenticated user on page load
+fetchAuthenticatedUser();
 
 const EXTRA_COLUMNS_PREFIX = 'arm-extra-columns:';
 const EXTRA_COLUMN_DATA_PREFIX = 'arm-extra-column-data:';
@@ -1998,7 +2014,12 @@ function applyTableFilters(rows) {
     
     return rows.filter(row => {
         // Proposer filter
-        if (proposerFilter !== 'all' && row.proposer !== proposerFilter) {
+        if (proposerFilter === 'not-me') {
+            // Show all except authenticated user's issues
+            if (authenticatedUser && row.proposer === authenticatedUser) {
+                return false;
+            }
+        } else if (proposerFilter !== 'all' && row.proposer !== proposerFilter) {
             return false;
         }
         
@@ -2107,6 +2128,12 @@ function renderCommentsTable(rows, commenters) {
     if (proposerFilter) {
         const currentValue = proposerFilter.value;
         let options = '<option value="all">All</option>';
+        
+        // Add "Not Me" option if authenticated user is known
+        if (authenticatedUser) {
+            options += `<option value="not-me">Not Me (${authenticatedUser})</option>`;
+        }
+        
         commenters.forEach(commenter => {
             options += `<option value="${commenter}">${commenter}</option>`;
         });
