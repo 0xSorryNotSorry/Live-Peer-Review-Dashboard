@@ -17,6 +17,7 @@ const EXTRA_COLUMNS_PREFIX = 'arm-extra-columns:';
 const EXTRA_COLUMN_DATA_PREFIX = 'arm-extra-column-data:';
 const SEEN_COMMENTS_PREFIX = 'arm-seen-comments:';
 const RESOLUTION_STATES_PREFIX = 'arm-resolution-states:';
+const LAST_SEEN_TIMESTAMP_PREFIX = 'arm-last-seen-timestamp:';
 
 function escapeAttribute(value) {
     if (value === undefined || value === null) return '';
@@ -53,6 +54,27 @@ function loadSeenComments() {
         return data ? new Set(JSON.parse(data)) : new Set();
     } catch (error) {
         return new Set();
+    }
+}
+
+// Load first-seen timestamps for notifications
+function loadFirstSeenTimestamps() {
+    try {
+        const key = getStorageKey(LAST_SEEN_TIMESTAMP_PREFIX);
+        const data = localStorage.getItem(key);
+        return data ? new Map(JSON.parse(data)) : new Map();
+    } catch (error) {
+        return new Map();
+    }
+}
+
+// Save first-seen timestamps
+function saveFirstSeenTimestamps(timestampsMap) {
+    try {
+        const key = getStorageKey(LAST_SEEN_TIMESTAMP_PREFIX);
+        localStorage.setItem(key, JSON.stringify(Array.from(timestampsMap.entries())));
+    } catch (error) {
+        console.error('Failed to save timestamps:', error);
     }
 }
 
@@ -96,6 +118,7 @@ function saveResolutionStates(statesMap) {
 function checkForNewComments(rows) {
     lastSeenComments = loadSeenComments();
     const previousResolutionStates = loadResolutionStates();
+    const firstSeenTimestamps = loadFirstSeenTimestamps();
     const currentResolutionStates = new Map();
     notifications = [];
     
@@ -175,11 +198,10 @@ function checkForNewComments(rows) {
                     const emoji = row[user]; // This contains the emoji (👍, 👎, etc.)
                     
                     if (emoji && emoji !== 'Proposer') {
-                        // Use the most recent reply timestamp if available, otherwise use a very old date
-                        // This ensures reactions don't appear newer than they are
-                        const lastReply = row.threadReplies && row.threadReplies.length > 0 
-                            ? row.threadReplies[row.threadReplies.length - 1] 
-                            : null;
+                        // Use first-seen timestamp for consistent ordering
+                        if (!firstSeenTimestamps.has(reactionId)) {
+                            firstSeenTimestamps.set(reactionId, new Date().toISOString());
+                        }
                         
                         notifications.push({
                             id: reactionId,
@@ -189,7 +211,7 @@ function checkForNewComments(rows) {
                             emoji: emoji,
                             issueNumber: row.issueNumber,
                             issueTitle: row.Comment.text,
-                            createdAt: lastReply ? lastReply.createdAt : new Date(0).toISOString(), // Use old date if no replies
+                            createdAt: firstSeenTimestamps.get(reactionId),
                             read: isRead
                         });
                     }
@@ -198,19 +220,14 @@ function checkForNewComments(rows) {
         }
     });
     
-    // Save current resolution states for next comparison
+    // Save current resolution states and timestamps for next comparison
     saveResolutionStates(currentResolutionStates);
+    saveFirstSeenTimestamps(firstSeenTimestamps);
     
     // Sort by most recent first (newest at top)
     notifications.sort((a, b) => {
         const dateA = new Date(a.createdAt).getTime();
         const dateB = new Date(b.createdAt).getTime();
-        
-        // Debug log
-        if (notifications.length <= 10) {
-            console.log(`Sorting: ${a.author || 'Resolution'} (${dateA}) vs ${b.author || 'Resolution'} (${dateB})`);
-        }
-        
         return dateB - dateA; // Descending order (newest first)
     });
     
