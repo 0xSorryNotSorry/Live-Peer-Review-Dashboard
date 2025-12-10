@@ -173,6 +173,26 @@ app.get("/api/me", async (req, res) => {
     }
 });
 
+// API: Get rate limit
+app.get("/api/rate-limit", async (req, res) => {
+    try {
+        const { data } = await octokit.rest.rateLimit.get();
+        const core = data.resources.core;
+        const resetDate = new Date(core.reset * 1000);
+        
+        res.json({
+            remaining: core.remaining,
+            limit: core.limit,
+            used: core.used,
+            reset: resetDate.toISOString(),
+            resetTime: resetDate.toLocaleTimeString()
+        });
+    } catch (error) {
+        console.error("Error getting rate limit:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // API: Get PR data
 app.get("/api/data", async (req, res) => {
     try {

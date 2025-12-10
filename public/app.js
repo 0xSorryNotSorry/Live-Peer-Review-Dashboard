@@ -29,6 +29,41 @@ async function fetchAuthenticatedUser() {
 // Initialize authenticated user on page load
 fetchAuthenticatedUser();
 
+// Fetch and update API rate limit
+async function updateAPICounter() {
+    try {
+        const response = await fetch('/api/rate-limit');
+        const data = await response.json();
+        
+        const counterValue = document.getElementById('apiCounterValue');
+        const counterReset = document.getElementById('apiCounterReset');
+        const counter = document.getElementById('apiCounter');
+        
+        if (counterValue && counterReset && counter) {
+            counterValue.textContent = `${data.remaining}/${data.limit}`;
+            counterReset.textContent = `Resets at ${data.resetTime}`;
+            
+            // Update color based on remaining calls
+            counter.classList.remove('low', 'medium');
+            const percentage = (data.remaining / data.limit) * 100;
+            
+            if (percentage < 20) {
+                counter.classList.add('low');
+            } else if (percentage < 50) {
+                counter.classList.add('medium');
+            }
+        }
+    } catch (error) {
+        console.error('Failed to fetch API rate limit:', error);
+    }
+}
+
+// Update API counter on page load and after each data fetch
+updateAPICounter();
+
+// Update API counter every 30 seconds
+setInterval(updateAPICounter, 30000);
+
 const EXTRA_COLUMNS_PREFIX = 'arm-extra-columns:';
 const EXTRA_COLUMN_DATA_PREFIX = 'arm-extra-column-data:';
 const SEEN_COMMENTS_PREFIX = 'arm-seen-comments:';
@@ -1396,7 +1431,7 @@ async function loadData(forceRefresh = false) {
         document.getElementById('error').style.display = 'none';
         
         // Fetch data for the active PR
-        const url = `/api/data?prIndex=${activePRIndex}${forceRefresh ? '&force=true' : ''}`;
+        const url = `/api/data?prIndex=${activePRIndex}${forceRefresh ? '&forceRefresh=true' : ''}`;
         const response = await fetch(url);
         const data = await response.json();
         
@@ -1406,6 +1441,9 @@ async function loadData(forceRefresh = false) {
         
         researchersConfig = data.researchersConfig;
         renderData(data);
+        
+        // Update API counter after data fetch
+        updateAPICounter();
         
         document.getElementById('loading').style.display = 'none';
         document.getElementById('content').style.display = 'block';
