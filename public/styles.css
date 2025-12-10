@@ -713,12 +713,26 @@ th, td {
     border: 1px solid #ddd;
     /* Prevent cells from forcing table width too wide */
     word-wrap: break-word;
+    word-break: break-word;
+    overflow-wrap: break-word;
     max-width: 400px; /* Sensible max width for cells */
 }
 
 /* Comments Table - Sticky Headers */
 #commentsTable {
     position: relative;
+}
+
+/* Ensure comment cells handle long URLs properly */
+#commentsTable .comment-cell {
+    max-width: 500px;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+#commentsTable .comment-cell a {
+    word-break: break-all;
+    overflow-wrap: anywhere;
 }
 
 #commentsTable thead th {
