@@ -592,20 +592,6 @@ table {
     font-size: 14px;
 }
 
-/* Sticky table header */
-#commentsTable thead {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: white;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-body.dark-mode #commentsTable thead {
-    background: #111827;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-}
-
 th, td {
     padding: 12px;
     text-align: left;
@@ -755,69 +741,9 @@ body.dark-mode .lsr-text {
 /* Report Status Dropdown */
 .reported-cell {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.reported-top {
-    display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
-}
-
-.action-buttons {
-    display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
-}
-
-.action-btn {
-    padding: 4px 8px;
-    background: #f8f9fa;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 16px;
-    transition: all 0.2s;
-}
-
-.action-btn:hover {
-    background: #e9ecef;
-    transform: scale(1.1);
-}
-
-.action-btn.active {
-    background: #007bff;
-    border-color: #007bff;
-    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
-}
-
-.action-btn.resolve-btn.active {
-    background: #28a745;
-    border-color: #28a745;
-    box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.25);
-}
-
-body.dark-mode .action-btn {
-    background: #374151;
-    border-color: #4b5563;
-}
-
-body.dark-mode .action-btn:hover {
-    background: #4b5563;
-}
-
-body.dark-mode .action-btn.active {
-    background: #7CFC00;
-    border-color: #7CFC00;
-    color: #003300;
-}
-
-body.dark-mode .action-btn.resolve-btn.active {
-    background: #00ff6a;
-    border-color: #00ff6a;
-    color: #003300;
 }
 
 .reported-badge {
