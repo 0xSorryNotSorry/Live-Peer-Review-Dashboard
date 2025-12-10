@@ -1,13 +1,12 @@
 FROM node:20-bookworm-slim AS base
 
-# Prevent Puppeteer from downloading Chromium (we'll use system Chromium)
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
     curl \
     ca-certificates \
     fonts-liberation \
+    fonts-freefont-ttf \
+    fonts-noto-color-emoji \
+    chromium \
     libatk-bridge2.0-0 \
     libgtk-3-0 \
     libnss3 \
@@ -19,9 +18,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     APP_DATA_DIR=/data \
     OUTPUT_DIR=/data
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
