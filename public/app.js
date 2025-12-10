@@ -18,6 +18,7 @@ const EXTRA_COLUMN_DATA_PREFIX = 'arm-extra-column-data:';
 const SEEN_COMMENTS_PREFIX = 'arm-seen-comments:';
 const RESOLUTION_STATES_PREFIX = 'arm-resolution-states:';
 const LAST_SEEN_TIMESTAMP_PREFIX = 'arm-last-seen-timestamp:';
+const ACTIVE_PR_KEY = 'arm-active-pr';
 
 function escapeAttribute(value) {
     if (value === undefined || value === null) return '';
@@ -126,31 +127,28 @@ function checkForNewComments(rows) {
         // Track current resolution state
         currentResolutionStates.set(row.commentUrl, row.isResolved);
         
-        // Check for resolution changes
-        const wasResolved = previousResolutionStates.get(row.commentUrl);
-        if (row.isResolved && wasResolved === false) {
-            // Thread was just resolved - find who resolved it
+        // Check for resolved threads (always show in notifications)
+        if (row.isResolved) {
             const resolutionId = `${row.commentUrl}-resolved`;
             const isRead = lastSeenComments.has(resolutionId);
+            
+            // Use first-seen timestamp for consistent ordering
+            if (!firstSeenTimestamps.has(resolutionId)) {
+                firstSeenTimestamps.set(resolutionId, new Date().toISOString());
+            }
             
             // Try to find who resolved it from thread comments
             let resolver = null;
             if (row.threadReplies && row.threadReplies.length > 0) {
-                // Look for "marked this conversation as resolved" message
                 const resolutionComment = row.threadReplies.find(r => {
                     const hasMessage = r.body && (
                         r.body.includes('marked this conversation as resolved') ||
                         r.body.includes('resolved this conversation')
                     );
-                    if (hasMessage) {
-                        console.log('Found resolution message:', r.body, 'by', r.author);
-                    }
                     return hasMessage;
                 });
                 if (resolutionComment) {
                     resolver = resolutionComment.author;
-                } else {
-                    console.log('No resolution message found in', row.threadReplies.length, 'replies for', row.commentUrl);
                 }
             }
             
@@ -161,7 +159,7 @@ function checkForNewComments(rows) {
                 issueNumber: row.issueNumber,
                 issueTitle: row.Comment.text,
                 resolver: resolver,
-                createdAt: new Date().toISOString(), // Use NOW since we just detected the resolution
+                createdAt: firstSeenTimestamps.get(resolutionId),
                 read: isRead
             });
         }
@@ -707,6 +705,15 @@ async function loadAllPRs() {
         allPRs = data.repositories || [];
         
         if (allPRs.length > 0) {
+            // Restore last active PR index
+            const savedIndex = localStorage.getItem(ACTIVE_PR_KEY);
+            if (savedIndex !== null) {
+                const index = parseInt(savedIndex);
+                if (index >= 0 && index < allPRs.length) {
+                    activePRIndex = index;
+                }
+            }
+            
             // Load current config into form fields
             const activeRepo = allPRs[activePRIndex];
             if (activeRepo) {
@@ -819,6 +826,9 @@ async function switchToPR(index) {
     if (index === activePRIndex) return;
     
     activePRIndex = index;
+    
+    // Save active PR index
+    localStorage.setItem(ACTIVE_PR_KEY, index.toString());
     
     // Update form fields with new active PR
     const activeRepo = allPRs[activePRIndex];

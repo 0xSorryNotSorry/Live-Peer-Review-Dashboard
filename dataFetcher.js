@@ -227,6 +227,7 @@ export async function getPRReviewCommentsWithReactions(
 
             row.thumbsUpCount = 0;
             row.thumbsDownCount = 0;
+            row.eyesCount = 0;
             row[commenter.login] = "Proposer";
             row.reactions = {};
 
@@ -254,6 +255,9 @@ export async function getPRReviewCommentsWithReactions(
                         row.reactions[user] = true;
                         break;
                     case "👀":
+                        row[user] = emoji;
+                        row.eyesCount += 1;
+                        row.reactions[user] = true;
                         break;
                     default:
                         console.warn("Incorrect emoji", emoji, user, commentUrl);
