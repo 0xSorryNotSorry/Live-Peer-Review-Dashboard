@@ -560,12 +560,14 @@ body.dark-mode .filter-select {
 }
 
 .table-wrapper {
-    overflow: auto;
-    max-height: 85vh; /* Make table scrollable within this height */
+    overflow-y: auto;
+    /* Only show horizontal scrollbar if strictly needed, avoid default appearance */
+    overflow-x: auto; 
+    max-height: 85vh;
     scroll-behavior: smooth;
-    max-width: 100%;
+    width: 100%;
     position: relative;
-    border: 1px solid #ddd; /* Optional: adds a border around the scrollable area */
+    border: 1px solid #ddd;
 }
 
 /* Custom scrollbar for table */
@@ -589,7 +591,7 @@ body.dark-mode .filter-select {
 
 table {
     width: 100%;
-    min-width: 800px; /* Ensure minimum width for readability */
+    /* min-width: 800px; Remove fixed min-width */
     border-collapse: collapse;
     font-size: 14px;
 }
@@ -598,6 +600,9 @@ th, td {
     padding: 12px;
     text-align: left;
     border: 1px solid #ddd;
+    /* Prevent cells from forcing table width too wide */
+    word-wrap: break-word;
+    max-width: 400px; /* Sensible max width for cells */
 }
 
 /* Comments Table - Sticky Headers */
