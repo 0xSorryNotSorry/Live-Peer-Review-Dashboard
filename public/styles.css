@@ -560,10 +560,12 @@ body.dark-mode .filter-select {
 }
 
 .table-wrapper {
-    overflow-x: auto;
-    overflow-y: visible;
+    overflow: auto;
+    max-height: 85vh; /* Make table scrollable within this height */
     scroll-behavior: smooth;
     max-width: 100%;
+    position: relative;
+    border: 1px solid #ddd; /* Optional: adds a border around the scrollable area */
 }
 
 /* Custom scrollbar for table */
@@ -596,6 +598,24 @@ th, td {
     padding: 12px;
     text-align: left;
     border: 1px solid #ddd;
+}
+
+/* Comments Table - Sticky Headers */
+#commentsTable {
+    position: relative;
+}
+
+#commentsTable thead th {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 100 !important;
+    background: white !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+body.dark-mode #commentsTable thead th {
+    background: #1f2937 !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
 
 /* Center align all columns in the All Comments table except the Comment column */
@@ -644,9 +664,6 @@ body.dark-mode .resolved-badge {
 th {
     background: #f8f9fa;
     font-weight: 600;
-    position: sticky;
-    top: 0;
-    z-index: 10;
 }
 
 tr:hover {
