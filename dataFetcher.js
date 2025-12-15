@@ -471,7 +471,7 @@ export async function getPRReviewCommentsWithReactions(
         });
     }
 
-    // Third pass: add other spotters info
+    // Third pass: add other spotters info and original issue number
     rows.forEach((row) => {
         if (row.isDuplicate) {
             const group = duplicateGroups.find((g) => {
@@ -492,6 +492,8 @@ export async function getPRReviewCommentsWithReactions(
 
                 row.otherSpotters = otherSpotters;
                 row.groupNumber = group.groupNumber;
+                row.originalIssueNumber = group.originalIssueNumber;
+                row.originalProposer = group.originalProposer;
             }
         }
     });
