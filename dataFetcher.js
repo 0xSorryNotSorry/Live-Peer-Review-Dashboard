@@ -482,7 +482,12 @@ export async function getPRReviewCommentsWithReactions(
                     .filter((dup) => dup.url !== row.commentUrl)
                     .map((dup) => {
                         const dupRow = rows.find((r) => r.commentUrl === dup.url);
-                        return `${dupRow.issueNumber} (${dup.proposer})`;
+                        // Safety check: ensure dupRow exists and has issueNumber
+                        if (dupRow && dupRow.issueNumber) {
+                            return `${dupRow.issueNumber} (${dup.proposer})`;
+                        } else {
+                            return `(${dup.proposer})`;
+                        }
                     });
 
                 row.otherSpotters = otherSpotters;
