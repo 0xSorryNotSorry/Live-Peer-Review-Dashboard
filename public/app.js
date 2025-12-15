@@ -1132,7 +1132,12 @@ function setupEventListeners() {
         btn.textContent = '⏳ Generating...';
         
         try {
-            const response = await fetch('/api/generate-pdf', { method: 'POST' });
+            // Send the active PR index to generate PDF only for current PR
+            const response = await fetch('/api/generate-pdf', { 
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prIndex: activePRIndex })
+            });
             
             if (response.ok) {
                 // Get the filename from the response headers or use default

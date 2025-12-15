@@ -576,8 +576,21 @@ app.post("/api/generate-pdf", async (req, res) => {
             return res.status(400).json({ error: "No repository configured" });
         }
 
-        const filename = `${config.name}.pdf`;
-        await generatePDF(config.repositories, config.name);
+        // Get the PR index from request body (default to 0 if not provided)
+        const prIndex = req.body?.prIndex ?? 0;
+        
+        // Get only the active PR
+        const activeRepo = config.repositories[prIndex];
+        if (!activeRepo) {
+            return res.status(400).json({ error: "Invalid PR index" });
+        }
+
+        // Generate filename based on the active PR (without .pdf extension, generatePDF adds it)
+        const fileBaseName = `${activeRepo.owner}_${activeRepo.repo}_PR${activeRepo.pullRequestNumber}`;
+        const filename = `${fileBaseName}.pdf`;
+        
+        // Generate PDF only for the active PR
+        await generatePDF([activeRepo], fileBaseName);
 
         // Send the PDF file as download
         res.setHeader("Content-Type", "application/pdf");
