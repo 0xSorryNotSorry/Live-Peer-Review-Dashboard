@@ -114,12 +114,19 @@ export async function getPRReviewCommentsWithReactions(
             reviewThreads(first: 100) {
               nodes {
                 isResolved
+                path
+                line
+                diffSide
                 comments(first: 10) {
                   nodes {
                     id
                     body
                     url
                     createdAt
+                    path
+                    diffHunk
+                    position
+                    originalPosition
                     author {
                       login
                     }
@@ -220,7 +227,12 @@ export async function getPRReviewCommentsWithReactions(
                 commentUrl: commentUrl,
                 threadReplies: threadReplies,
                 replyCount: threadReplies.length,
-                isResolved: isResolved
+                isResolved: isResolved,
+                // Code context from the thread
+                path: thread.path || firstComment.path,
+                diffHunk: firstComment.diffHunk,
+                line: thread.line,
+                diffSide: thread.diffSide
             };
 
             const reactions = firstComment.reactions.nodes;

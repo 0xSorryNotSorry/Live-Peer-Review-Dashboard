@@ -71,6 +71,8 @@ const RESOLUTION_STATES_PREFIX = 'arm-resolution-states:';
 const LAST_SEEN_TIMESTAMP_PREFIX = 'arm-last-seen-timestamp:';
 const ACTIVE_PR_KEY = 'arm-active-pr';
 const REPORT_STATUS_PREFIX = 'arm-report-status:';
+const COMMENT_COLLAPSE_PREFIX = 'arm-comment-collapse:';
+const DUP_GROUP_COLLAPSE_PREFIX = 'arm-dup-group-collapse:';
 
 function escapeAttribute(value) {
     if (value === undefined || value === null) return '';
@@ -97,6 +99,69 @@ function formatTimestamp(isoString) {
     if (minutes < 60) return `${minutes}m ago`;
     if (hours < 24) return `${hours}h ago`;
     return `${days}d ago`;
+}
+
+// Simple markdown formatter for comments
+function formatMarkdown(text) {
+    if (!text) return '';
+    
+    let html = escapeHtml(text);
+    
+    // Code blocks (```code```)
+    html = html.replace(/```([^`]+)```/g, '<pre class="inline-code-block">$1</pre>');
+    
+    // Inline code (`code`)
+    html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+    
+    // Bold (**text** or __text__)
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+    
+    // Italic (*text* or _text_)
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
+    
+    // Links [text](url)
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+    
+    // Line breaks
+    html = html.replace(/\n/g, '<br>');
+    
+    return html;
+}
+
+// Get collapse state for a comment
+function getCommentCollapseState(commentUrl) {
+    if (!currentRepoKey) return 'collapsed';
+    const key = `${COMMENT_COLLAPSE_PREFIX}${currentRepoKey}`;
+    const states = JSON.parse(localStorage.getItem(key) || '{}');
+    return states[commentUrl] || 'collapsed';
+}
+
+// Save collapse state for a comment
+function saveCommentCollapseState(commentUrl, state) {
+    if (!currentRepoKey) return;
+    const key = `${COMMENT_COLLAPSE_PREFIX}${currentRepoKey}`;
+    const states = JSON.parse(localStorage.getItem(key) || '{}');
+    states[commentUrl] = state;
+    localStorage.setItem(key, JSON.stringify(states));
+}
+
+// Get collapse state for a duplicate group
+function getDupGroupCollapseState(groupId) {
+    if (!currentRepoKey) return 'expanded';
+    const key = `${DUP_GROUP_COLLAPSE_PREFIX}${currentRepoKey}`;
+    const states = JSON.parse(localStorage.getItem(key) || '{}');
+    return states[groupId] || 'expanded';
+}
+
+// Save collapse state for a duplicate group
+function saveDupGroupCollapseState(groupId, state) {
+    if (!currentRepoKey) return;
+    const key = `${DUP_GROUP_COLLAPSE_PREFIX}${currentRepoKey}`;
+    const states = JSON.parse(localStorage.getItem(key) || '{}');
+    states[groupId] = state;
+    localStorage.setItem(key, JSON.stringify(states));
 }
 
 // Load seen comments from localStorage
@@ -1766,9 +1831,11 @@ function renderDuplicateGroups(groups) {
             return `<a href="${dup.url}" target="_blank">${subNumber} (${dup.proposer})</a>`;
         }).join(', ');
         
+        const groupAnchor = `dup-group-${group.groupNumber}`;
+        
         html += `
             <tr>
-                <td><strong>${group.groupNumber}</strong></td>
+                <td><strong><a href="#${groupAnchor}" class="group-link">${group.groupNumber}</a></strong></td>
                 <td>${dupLinks}</td>
                 <td>${group.count}</td>
             </tr>
@@ -1846,73 +1913,79 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
         }
         html += `</td>`;
     
-    // Comment with thread view
+    // Comment with thread view - ALWAYS collapsible
     const hasReplies = row.replyCount > 0;
     const threadId = `thread-${encodeURIComponent(row.commentUrl)}`;
+    const collapseState = getCommentCollapseState(row.commentUrl);
+    const isExpanded = collapseState === 'expanded';
     
     html += `<td class="comment-cell">`;
     
-    // Main comment with expand button if there are replies
-    if (hasReplies) {
-        html += `<div class="comment-header">`;
-        html += `<button class="thread-toggle" data-thread-id="${threadId}">▶ ${row.replyCount} ${row.replyCount === 1 ? 'reply' : 'replies'}</button>`;
-        html += `<a href="${row.Comment.hyperlink}" target="_blank">${row.Comment.text}</a>`;
+    // Comment header with expand button (always present)
+    html += `<div class="comment-header">`;
+    html += `<button class="thread-toggle" data-thread-id="${threadId}">${isExpanded ? '▼' : '▶'} ${hasReplies ? `${row.replyCount} ${row.replyCount === 1 ? 'reply' : 'replies'}` : 'Details'}</button>`;
+    html += `<a href="${row.Comment.hyperlink}" target="_blank">${row.Comment.text}</a>`;
+    html += `</div>`;
+    
+    // Thread view (collapsible)
+    html += `<div class="thread-view" id="${threadId}" style="display: ${isExpanded ? 'block' : 'none'};">`;
+    
+    // Code context (if available)
+    if (row.diffHunk) {
+        html += `<div class="code-context">`;
+        html += `<div class="code-file-path">${escapeHtml(row.path || 'Unknown file')}</div>`;
+        html += `<pre class="code-snippet">${escapeHtml(row.diffHunk)}</pre>`;
         html += `</div>`;
-        
-        // Thread view (collapsed by default)
-        html += `<div class="thread-view" id="${threadId}" style="display: none;">`;
-        
-        // Original comment
-        html += `<div class="thread-comment original">`;
-        html += `<div class="comment-author">${row.proposer}</div>`;
-        html += `<div class="comment-body">${escapeHtml(row.Comment.fullText || row.Comment.text)}</div>`;
-        
-        // Show reactions on original comment
-        const originalReactions = [];
-        commenters.forEach(commenter => {
-            const emoji = row[commenter];
-            if (emoji && emoji !== 'Proposer' && commenter !== row.proposer) {
-                originalReactions.push({ emoji, user: commenter });
-            }
-        });
-        
-        if (originalReactions.length > 0) {
-            html += `<div class="comment-reactions">`;
-            originalReactions.forEach(r => {
-                html += `<span class="reaction">${r.emoji} ${r.user}</span>`;
-            });
-            html += `</div>`;
-        }
-        
-        html += `</div>`;
-        
-        // Replies
-        if (row.threadReplies) {
-            row.threadReplies.forEach(reply => {
-                html += `<div class="thread-comment reply">`;
-                html += `<div class="comment-meta">`;
-                html += `<span class="comment-author">${reply.author}</span>`;
-                html += `<span class="comment-time">${formatTimestamp(reply.createdAt)}</span>`;
-                html += `</div>`;
-                html += `<div class="comment-body">${escapeHtml(reply.body)}</div>`;
-                
-                // Show reactions if any
-                if (reply.reactions && reply.reactions.length > 0) {
-                    html += `<div class="comment-reactions">`;
-                    reply.reactions.forEach(r => {
-                        html += `<span class="reaction">${r.content} ${r.user}</span>`;
-                    });
-                    html += `</div>`;
-                }
-                
-                html += `</div>`;
-            });
-        }
-        
-        html += `</div>`;
-    } else {
-        html += `<a href="${row.Comment.hyperlink}" target="_blank">${row.Comment.text}</a>`;
     }
+    
+    // Original comment
+    html += `<div class="thread-comment original">`;
+    html += `<div class="comment-author">${row.proposer}</div>`;
+    html += `<div class="comment-body">${formatMarkdown(row.Comment.fullText || row.Comment.text)}</div>`;
+    
+    // Show reactions on original comment
+    const originalReactions = [];
+    commenters.forEach(commenter => {
+        const emoji = row[commenter];
+        if (emoji && emoji !== 'Proposer' && commenter !== row.proposer) {
+            originalReactions.push({ emoji, user: commenter });
+        }
+    });
+    
+    if (originalReactions.length > 0) {
+        html += `<div class="comment-reactions">`;
+        originalReactions.forEach(r => {
+            html += `<span class="reaction">${r.emoji} ${r.user}</span>`;
+        });
+        html += `</div>`;
+    }
+    
+    html += `</div>`;
+    
+    // Replies
+    if (row.threadReplies && row.threadReplies.length > 0) {
+        row.threadReplies.forEach(reply => {
+            html += `<div class="thread-comment reply">`;
+            html += `<div class="comment-meta">`;
+            html += `<span class="comment-author">${reply.author}</span>`;
+            html += `<span class="comment-time">${formatTimestamp(reply.createdAt)}</span>`;
+            html += `</div>`;
+            html += `<div class="comment-body">${formatMarkdown(reply.body)}</div>`;
+            
+            // Show reactions if any
+            if (reply.reactions && reply.reactions.length > 0) {
+                html += `<div class="comment-reactions">`;
+                reply.reactions.forEach(r => {
+                    html += `<span class="reaction">${r.content} ${r.user}</span>`;
+                });
+                html += `</div>`;
+            }
+            
+            html += `</div>`;
+        });
+    }
+    
+    html += `</div>`;
     
     html += `</td>`;
     
@@ -1940,7 +2013,8 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
     // Duplicate
     if (row.isDuplicate) {
         let dupText = `<strong>${row.proposer}</strong><br>`;
-        dupText += `Group: <strong>${row.groupNumber}</strong>`;
+        const groupAnchor = `dup-group-${row.groupNumber}`;
+        dupText += `Group: <strong><a href="#${groupAnchor}" class="group-link">${row.groupNumber}</a></strong>`;
         
         if (row.isAutoDuplicate) {
             dupText += `<br><button class="btn-undupe" onclick="undupeFinding('${row.commentUrl}', '${row.duplicateOf}')">❌ Undupe</button>`;
@@ -2108,14 +2182,19 @@ function toggleThread(threadId, button) {
     const threadView = document.getElementById(threadId);
     if (!threadView) return;
     
+    // Extract comment URL from threadId (format: thread-<encoded-url>)
+    const commentUrl = decodeURIComponent(threadId.replace('thread-', ''));
+    
     const isCollapsed = threadView.style.display === 'none';
     
     if (isCollapsed) {
         threadView.style.display = 'block';
         button.textContent = button.textContent.replace('▶', '▼');
+        saveCommentCollapseState(commentUrl, 'expanded');
     } else {
         threadView.style.display = 'none';
         button.textContent = button.textContent.replace('▼', '▶');
+        saveCommentCollapseState(commentUrl, 'collapsed');
     }
 }
 
@@ -2157,6 +2236,9 @@ function toggleDuplicateGroup(groupId) {
     
     // Update icon
     icon.textContent = isCollapsed ? '▼' : '▶';
+    
+    // Save state
+    saveDupGroupCollapseState(groupId, isCollapsed ? 'expanded' : 'collapsed');
 }
 
 function renderCommentsTable(rows, commenters) {
@@ -2231,15 +2313,26 @@ function renderCommentsTable(rows, commenters) {
     sortedGroups.forEach(([groupNumber, groupRows]) => {
         // Group header row (always visible, clickable) - NO data-group-id on header!
         const groupId = `dup-group-${groupNumber}`;
-        bodyHtml += `<tr class="duplicate-group-header" data-header-for="${groupId}">`;
+        const collapseState = getDupGroupCollapseState(groupId);
+        const isCollapsed = collapseState === 'collapsed';
+        
+        bodyHtml += `<tr class="duplicate-group-header" data-header-for="${groupId}" id="${groupId}">`;
         bodyHtml += `<td colspan="${5 + commenters.length + extraColumns.length}" style="background-color: #e8f4f8; cursor: pointer; font-weight: bold; padding: 10px;">`;
-        bodyHtml += `<span class="collapse-icon" data-group-id="${groupId}" style="font-size: 1.2em; font-weight: bold; margin-right: 10px; display: inline-block; min-width: 20px;">▼</span>`;
+        bodyHtml += `<span class="collapse-icon" data-group-id="${groupId}" style="font-size: 1.2em; font-weight: bold; margin-right: 10px; display: inline-block; min-width: 20px;">${isCollapsed ? '▶' : '▼'}</span>`;
         bodyHtml += `<span style="font-size: 1.1em;">Duplicate Group ${groupNumber} (${groupRows.length} issue${groupRows.length > 1 ? 's' : ''})</span>`;
         bodyHtml += `</td></tr>`;
         
         // Group rows (collapsible) - these have data-group-id
-        groupRows.forEach(row => {
-            bodyHtml += renderTableRow(row, commenters, true, groupId, rows);
+        groupRows.forEach((row, index) => {
+            const rowHtml = renderTableRow(row, commenters, true, groupId, rows);
+            // Apply collapse state: first row always visible, rest hidden if collapsed
+            if (isCollapsed && index > 0) {
+                bodyHtml += rowHtml.replace('<tr class="', '<tr style="display: none;" class="');
+            } else if (isCollapsed && index === 0) {
+                bodyHtml += rowHtml.replace('<tr class="', '<tr class="collapsed-group-last ');
+            } else {
+                bodyHtml += rowHtml;
+            }
         });
     });
     
