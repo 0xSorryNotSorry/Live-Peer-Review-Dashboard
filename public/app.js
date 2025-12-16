@@ -107,8 +107,19 @@ function formatMarkdown(text) {
     
     let html = escapeHtml(text);
     
-    // Code blocks (```code```)
-    html = html.replace(/```([^`]+)```/g, '<pre class="inline-code-block">$1</pre>');
+    // Code blocks with language (```language\ncode```)
+    html = html.replace(/```(\w+)?\n?([\s\S]*?)```/g, function(match, lang, code) {
+        const language = lang || 'solidity'; // Default to solidity
+        const uniqueId = 'code-' + Math.random().toString(36).substr(2, 9);
+        // Store for later Prism highlighting
+        setTimeout(() => {
+            const el = document.getElementById(uniqueId);
+            if (el && typeof Prism !== 'undefined') {
+                Prism.highlightElement(el.querySelector('code'));
+            }
+        }, 0);
+        return `<pre id="${uniqueId}" class="inline-code-block"><code class="language-${language}">${code.trim()}</code></pre>`;
+    });
     
     // Inline code (`code`)
     html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
@@ -1938,9 +1949,12 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
         if (fileExt === 'js' || fileExt === 'ts') language = 'javascript';
         else if (fileExt === 'sol') language = 'solidity';
         
+        // Get the actual starting line number from the repo
+        const startLineNum = row.startLine || row.line || 1;
+        
         html += `<div class="code-context">`;
         html += `<div class="code-file-path">${escapeHtml(row.path || 'Unknown file')}</div>`;
-        html += `<pre class="line-numbers"><code class="language-${language}">${escapeHtml(row.diffHunk)}</code></pre>`;
+        html += `<pre class="line-numbers" data-start="${startLineNum}"><code class="language-${language}">${escapeHtml(row.diffHunk)}</code></pre>`;
         html += `</div>`;
     }
     

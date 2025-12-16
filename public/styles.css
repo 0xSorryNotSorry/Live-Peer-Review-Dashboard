@@ -1551,16 +1551,23 @@ body.dark-mode .refresh-hint {
 
 .inline-code-block {
     display: block;
-    background: #f6f8fa;
+    background: #2d2d2d;
     padding: 12px;
     border-radius: 6px;
     font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
     font-size: 12px;
     line-height: 1.5;
-    color: #24292f;
-    border: 1px solid #d0d7de;
+    color: #e5e7eb;
+    border: 1px solid #4a4a4a;
     overflow-x: auto;
     margin: 8px 0;
+}
+
+.inline-code-block code {
+    background: transparent;
+    padding: 0;
+    border: none;
+    color: inherit;
 }
 
 .group-link {
@@ -1646,9 +1653,13 @@ body.dark-mode .inline-code {
 }
 
 body.dark-mode .inline-code-block {
-    background: #1f2937;
+    background: #1a1a1a;
     color: #e5e7eb;
-    border-color: #374151;
+    border-color: #333;
+}
+
+body.dark-mode .inline-code-block code {
+    color: inherit;
 }
 
 body.dark-mode .group-link {
