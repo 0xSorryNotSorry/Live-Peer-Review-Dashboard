@@ -94,6 +94,7 @@ function extractCommentIdFromUrl(url) {
 }
 
 // Extract the exact lines that the comment refers to from the diff hunk
+// Returns clean code without diff markers (+, -, @@)
 function extractCommentLines(diffHunk, startLine, endLine) {
     if (!diffHunk) return diffHunk;
     
@@ -120,14 +121,17 @@ function extractCommentLines(diffHunk, startLine, endLine) {
         if (lineType === '+' || lineType === ' ') {
             // Check if this line is within the comment's range
             if (currentLine >= startLine && currentLine <= endLine) {
-                result.push(line);
+                // Remove the diff marker (first character: +, -, or space)
+                const cleanLine = line.substring(1);
+                result.push(cleanLine);
             }
             currentLine++;
         } else if (lineType === '-') {
             // Removed lines don't increment the new line counter
             // But include them if they're in the context
             if (currentLine >= startLine && currentLine <= endLine) {
-                result.push(line);
+                const cleanLine = line.substring(1);
+                result.push(cleanLine);
             }
         }
         
@@ -137,9 +141,9 @@ function extractCommentLines(diffHunk, startLine, endLine) {
         }
     }
     
-    // If we found matching lines, add the header and return
+    // Return clean code without diff header or markers
     if (result.length > 0) {
-        return lines[0] + '\n' + result.join('\n');
+        return result.join('\n');
     }
     
     // Fallback: return the original diff hunk

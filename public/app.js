@@ -1932,9 +1932,15 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
     
     // Code context (if available)
     if (row.diffHunk) {
+        // Detect language from file extension
+        const fileExt = row.path ? row.path.split('.').pop().toLowerCase() : '';
+        let language = 'solidity'; // Default to Solidity for smart contracts
+        if (fileExt === 'js' || fileExt === 'ts') language = 'javascript';
+        else if (fileExt === 'sol') language = 'solidity';
+        
         html += `<div class="code-context">`;
         html += `<div class="code-file-path">${escapeHtml(row.path || 'Unknown file')}</div>`;
-        html += `<pre class="code-snippet">${escapeHtml(row.diffHunk)}</pre>`;
+        html += `<pre class="line-numbers"><code class="language-${language}">${escapeHtml(row.diffHunk)}</code></pre>`;
         html += `</div>`;
     }
     
@@ -2342,6 +2348,11 @@ function renderCommentsTable(rows, commenters) {
     });
     
     document.getElementById('commentsTableBody').innerHTML = bodyHtml;
+    
+    // Apply syntax highlighting to code blocks
+    if (typeof Prism !== 'undefined') {
+        Prism.highlightAll();
+    }
     
     // Add click handlers for collapse/expand
     document.querySelectorAll('.duplicate-group-header').forEach(header => {
