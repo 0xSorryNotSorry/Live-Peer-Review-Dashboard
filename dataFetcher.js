@@ -1,10 +1,16 @@
 import { graphql } from "@octokit/graphql";
+import { Octokit } from "@octokit/rest";
 import fs from "fs/promises";
 import dotenv from "dotenv";
 import puppeteer from "puppeteer";
 import { join } from "path";
 
 dotenv.config();
+
+// Initialize Octokit for REST API calls
+const octokit = new Octokit({
+    auth: process.env.GITHUB_TOKEN,
+});
 
 // Color constants for consistent styling
 const COLORS = {
@@ -87,6 +93,34 @@ function extractCommentIdFromUrl(url) {
     return match ? match[1] : null;
 }
 
+// Fetch diff hunks for all review comments using REST API
+async function fetchDiffHunks(owner, repo, pullRequestNumber) {
+    try {
+        const response = await octokit.rest.pulls.listReviewComments({
+            owner,
+            repo,
+            pull_number: pullRequestNumber,
+            per_page: 100
+        });
+        
+        // Create a map of comment URL to diff context
+        const diffHunkMap = new Map();
+        response.data.forEach(comment => {
+            diffHunkMap.set(comment.html_url, {
+                diffHunk: comment.diff_hunk,
+                path: comment.path,
+                line: comment.line,
+                originalLine: comment.original_line
+            });
+        });
+        
+        return diffHunkMap;
+    } catch (error) {
+        console.error('Error fetching diff hunks:', error.message);
+        return new Map();
+    }
+}
+
 // Fetch PR review comments with reactions using GraphQL
 export async function getPRReviewCommentsWithReactions(
     owner,
@@ -105,6 +139,9 @@ export async function getPRReviewCommentsWithReactions(
 
     const duplicateMap = new Map();
     const originalToDuplicates = new Map();
+
+    // Fetch diff hunks from REST API (more reliable than GraphQL)
+    const diffHunkMap = await fetchDiffHunks(owner, repo, pullRequestNumber);
 
     try {
         const query = `
@@ -215,6 +252,9 @@ export async function getPRReviewCommentsWithReactions(
                 };
             });
 
+            // Get diff context from REST API map (more reliable)
+            const diffContext = diffHunkMap.get(commentUrl) || {};
+            
             const row = {
                 Comment: { 
                     text: truncatedText, 
@@ -228,10 +268,10 @@ export async function getPRReviewCommentsWithReactions(
                 threadReplies: threadReplies,
                 replyCount: threadReplies.length,
                 isResolved: isResolved,
-                // Code context from the thread
-                path: thread.path || firstComment.path,
-                diffHunk: firstComment.diffHunk,
-                line: thread.line,
+                // Code context from REST API (more reliable than GraphQL)
+                path: diffContext.path || thread.path || firstComment.path,
+                diffHunk: diffContext.diffHunk || firstComment.diffHunk,
+                line: diffContext.line || thread.line,
                 diffSide: thread.diffSide
             };
 
