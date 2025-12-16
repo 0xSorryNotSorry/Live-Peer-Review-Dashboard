@@ -93,6 +93,47 @@ function extractCommentIdFromUrl(url) {
     return match ? match[1] : null;
 }
 
+// Trim diff hunk to show only relevant context (max 10 lines)
+function trimDiffHunk(diffHunk, maxLines = 10) {
+    if (!diffHunk) return diffHunk;
+    
+    const lines = diffHunk.split('\n');
+    
+    // If already short enough, return as-is
+    if (lines.length <= maxLines) {
+        return diffHunk;
+    }
+    
+    // Find the last line with a '+' or '-' (the actual change)
+    let lastChangeIndex = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (line.startsWith('+') || line.startsWith('-')) {
+            lastChangeIndex = i;
+            break;
+        }
+    }
+    
+    // If we found a change, show context around it
+    if (lastChangeIndex >= 0) {
+        // Show 3 lines before and after the last change, or up to maxLines total
+        const contextBefore = 3;
+        const contextAfter = 3;
+        const start = Math.max(0, lastChangeIndex - contextBefore);
+        const end = Math.min(lines.length, lastChangeIndex + contextAfter + 1);
+        
+        // Ensure we don't exceed maxLines
+        const selectedLines = lines.slice(start, end);
+        if (selectedLines.length > maxLines) {
+            return selectedLines.slice(0, maxLines).join('\n');
+        }
+        return selectedLines.join('\n');
+    }
+    
+    // If no changes found, just take the last maxLines
+    return lines.slice(-maxLines).join('\n');
+}
+
 // Fetch diff hunks for all review comments using REST API
 async function fetchDiffHunks(owner, repo, pullRequestNumber) {
     try {
@@ -106,8 +147,11 @@ async function fetchDiffHunks(owner, repo, pullRequestNumber) {
         // Create a map of comment URL to diff context
         const diffHunkMap = new Map();
         response.data.forEach(comment => {
+            // Trim the diff hunk to show only relevant context
+            const trimmedDiffHunk = trimDiffHunk(comment.diff_hunk, 10);
+            
             diffHunkMap.set(comment.html_url, {
-                diffHunk: comment.diff_hunk,
+                diffHunk: trimmedDiffHunk,
                 path: comment.path,
                 line: comment.line,
                 originalLine: comment.original_line
