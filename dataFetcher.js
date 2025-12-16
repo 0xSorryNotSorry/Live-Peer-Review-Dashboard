@@ -93,45 +93,57 @@ function extractCommentIdFromUrl(url) {
     return match ? match[1] : null;
 }
 
-// Trim diff hunk to show only relevant context (max 10 lines)
-function trimDiffHunk(diffHunk, maxLines = 10) {
+// Extract the exact lines that the comment refers to from the diff hunk
+function extractCommentLines(diffHunk, startLine, endLine) {
     if (!diffHunk) return diffHunk;
     
     const lines = diffHunk.split('\n');
+    const result = [];
     
-    // If already short enough, return as-is
-    if (lines.length <= maxLines) {
+    // Parse the diff hunk header to get the starting line number
+    // Format: @@ -oldStart,oldCount +newStart,newCount @@
+    const headerMatch = lines[0]?.match(/@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+    if (!headerMatch) {
+        // If we can't parse the header, return the whole hunk (fallback)
         return diffHunk;
     }
     
-    // Find the last line with a '+' or '-' (the actual change)
-    let lastChangeIndex = -1;
-    for (let i = lines.length - 1; i >= 0; i--) {
+    const diffStartLine = parseInt(headerMatch[1]);
+    let currentLine = diffStartLine;
+    
+    // Find the lines that match the comment's line range
+    for (let i = 1; i < lines.length; i++) {
         const line = lines[i];
-        if (line.startsWith('+') || line.startsWith('-')) {
-            lastChangeIndex = i;
+        const lineType = line[0]; // '+', '-', or ' '
+        
+        // Track line numbers (only count added/unchanged lines, not removed)
+        if (lineType === '+' || lineType === ' ') {
+            // Check if this line is within the comment's range
+            if (currentLine >= startLine && currentLine <= endLine) {
+                result.push(line);
+            }
+            currentLine++;
+        } else if (lineType === '-') {
+            // Removed lines don't increment the new line counter
+            // But include them if they're in the context
+            if (currentLine >= startLine && currentLine <= endLine) {
+                result.push(line);
+            }
+        }
+        
+        // Stop once we're past the end line
+        if (currentLine > endLine) {
             break;
         }
     }
     
-    // If we found a change, show context around it
-    if (lastChangeIndex >= 0) {
-        // Show 3 lines before and after the last change, or up to maxLines total
-        const contextBefore = 3;
-        const contextAfter = 3;
-        const start = Math.max(0, lastChangeIndex - contextBefore);
-        const end = Math.min(lines.length, lastChangeIndex + contextAfter + 1);
-        
-        // Ensure we don't exceed maxLines
-        const selectedLines = lines.slice(start, end);
-        if (selectedLines.length > maxLines) {
-            return selectedLines.slice(0, maxLines).join('\n');
-        }
-        return selectedLines.join('\n');
+    // If we found matching lines, add the header and return
+    if (result.length > 0) {
+        return lines[0] + '\n' + result.join('\n');
     }
     
-    // If no changes found, just take the last maxLines
-    return lines.slice(-maxLines).join('\n');
+    // Fallback: return the original diff hunk
+    return diffHunk;
 }
 
 // Fetch diff hunks for all review comments using REST API
@@ -147,13 +159,18 @@ async function fetchDiffHunks(owner, repo, pullRequestNumber) {
         // Create a map of comment URL to diff context
         const diffHunkMap = new Map();
         response.data.forEach(comment => {
-            // Trim the diff hunk to show only relevant context
-            const trimmedDiffHunk = trimDiffHunk(comment.diff_hunk, 10);
+            // Determine the line range for the comment
+            const startLine = comment.start_line || comment.original_line || comment.line;
+            const endLine = comment.line;
+            
+            // Extract only the lines that the comment refers to
+            const relevantDiffHunk = extractCommentLines(comment.diff_hunk, startLine, endLine);
             
             diffHunkMap.set(comment.html_url, {
-                diffHunk: trimmedDiffHunk,
+                diffHunk: relevantDiffHunk,
                 path: comment.path,
                 line: comment.line,
+                startLine: startLine,
                 originalLine: comment.original_line
             });
         });
