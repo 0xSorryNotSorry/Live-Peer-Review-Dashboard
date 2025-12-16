@@ -1388,7 +1388,7 @@ body.dark-mode .red-row {
     font-size: 24px;
     cursor: pointer;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    z-index: 999;
+    z-index: 1001;
     transition: all 0.3s;
     display: flex;
     align-items: center;
