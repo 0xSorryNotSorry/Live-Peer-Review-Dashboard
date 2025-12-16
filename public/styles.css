@@ -1374,6 +1374,45 @@ body.dark-mode .red-row {
     justify-content: center;
 }
 
+/* Collapse All Button */
+.collapse-all-btn {
+    position: fixed;
+    bottom: 90px;
+    right: 30px;
+    width: 50px;
+    height: 50px;
+    background: #6f42c1;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    font-size: 24px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 999;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.collapse-all-btn:hover {
+    background: #5a32a3;
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.collapse-all-btn:active {
+    transform: scale(0.95);
+}
+
+.collapse-all-btn.collapsed {
+    background: #17a2b8;
+}
+
+.collapse-all-btn.collapsed:hover {
+    background: #138496;
+}
+
 /* Dark mode styles */
 body.dark-mode .floating-refresh {
     background: #7CFC00;
@@ -1678,6 +1717,24 @@ body.dark-mode .go-to-top {
 
 body.dark-mode .go-to-top:hover {
     background: #7CFC00;
+}
+
+body.dark-mode .collapse-all-btn {
+    background: #9d6dd8;
+    color: #1a1a1a;
+}
+
+body.dark-mode .collapse-all-btn:hover {
+    background: #b388e6;
+}
+
+body.dark-mode .collapse-all-btn.collapsed {
+    background: #4dd0e1;
+    color: #1a1a1a;
+}
+
+body.dark-mode .collapse-all-btn.collapsed:hover {
+    background: #80deea;
 }
 
 /* Notification Button */

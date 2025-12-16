@@ -778,6 +778,40 @@ function setupFloatingButtons() {
         });
     });
     
+    // Collapse All button
+    const collapseAllBtn = document.getElementById('collapseAllBtn');
+    let allCollapsed = false;
+    
+    collapseAllBtn.addEventListener('click', () => {
+        const threadViews = document.querySelectorAll('.thread-view');
+        const toggleButtons = document.querySelectorAll('.thread-toggle');
+        
+        allCollapsed = !allCollapsed;
+        
+        threadViews.forEach(view => {
+            view.style.display = allCollapsed ? 'none' : 'block';
+        });
+        
+        toggleButtons.forEach(button => {
+            if (allCollapsed) {
+                button.textContent = button.textContent.replace('▼', '▶');
+            } else {
+                button.textContent = button.textContent.replace('▶', '▼');
+            }
+        });
+        
+        // Update button appearance
+        if (allCollapsed) {
+            collapseAllBtn.classList.add('collapsed');
+            collapseAllBtn.textContent = '📂';
+            collapseAllBtn.title = 'Expand all comments';
+        } else {
+            collapseAllBtn.classList.remove('collapsed');
+            collapseAllBtn.textContent = '📦';
+            collapseAllBtn.title = 'Collapse all comments';
+        }
+    });
+    
     // Notification button and panel
     const notificationBtn = document.getElementById('notificationBtn');
     const notificationPanel = document.getElementById('notificationPanel');
