@@ -262,10 +262,27 @@ dup of #discussion_r456789
 
 ### Working with the Table
 
-**Collapsible threads:**
-- Click "▶ X replies" to expand conversation
-- See all comments and reactions
+**Collapsible threads with code context:**
+- Click "▶ Details" or "▶ X replies" to expand
+- **ALL comments** are expandable (not just those with replies)
+- See full comment text with markdown formatting
+- **Code snippets** with syntax highlighting:
+  - Shows exact lines from repo (e.g., lines 112-115)
+  - File path displayed
+  - Solidity/JavaScript syntax coloring
+  - Clean code without diff markers (+/-)
+- **Inline code blocks** in comments also highlighted
 - Chat-style UI with timestamps
+- **Collapse state persists** across page refreshes
+
+**Bulk collapse/expand:**
+- Click purple 📦 button (floating, bottom-right)
+- Toggle ALL comment details at once
+
+**Clickable duplicate group links:**
+- Click group number (e.g., "D-1") in duplicate cell
+- Jumps to that group's section in table
+- Also works in Duplicate Findings summary table
 
 **Filtering:**
 - **Proposer**: Show issues from specific researcher
@@ -288,9 +305,10 @@ dup of #discussion_r456789
 - Duplicate groups sync assignments
 
 **Collapsible duplicate groups:**
-- Click group header to collapse
-- First duplicate stays visible
+- Click group header to collapse/expand
+- First duplicate stays visible when collapsed
 - Blue separator when collapsed
+- Collapse state persists across refreshes
 
 </details>
 
@@ -317,9 +335,11 @@ dup of #discussion_r456789
 - Fresh enough for active reviews
 - Force refresh when you need absolute latest
 
-**Go to top button:**
-- Appears when scrolling down
-- Click to scroll to top smoothly
+**Floating buttons:**
+- **🔄 Refresh**: Drag anywhere, click to refresh, Shift+Click for force refresh
+- **⬆️ Go to Top**: Appears when scrolling, smooth scroll to top
+- **📦 Collapse All**: Toggle all comment details open/closed
+- **🔔 Notifications**: View activity feed
 
 </details>
 
@@ -355,6 +375,11 @@ node main.js --config-path=./config.json
 - Double-click PR tab = Rename tab
 - Double-click column header = Rename column
 
+**UI shortcuts:**
+- Click 📦 button = Collapse/expand all comments
+- Click group number (D-1) = Jump to that duplicate group
+- Click ▶ Details = Expand comment with code context
+
 **Best practices:**
 - Configure researchers per PR for accurate filtering
 - Use "Won't Report" for false positives
@@ -366,7 +391,6 @@ node main.js --config-path=./config.json
 - Not seeing updates? Click "⚡ Force Refresh"
 - Wrong PR showing? Check active tab at top
 - Missing researchers? Configure them per PR
-- API rate limit? Wait or use caching (30s)
 
 ---
 
@@ -414,12 +438,16 @@ Delete the JSON files or clear browser localStorage.
 
 **Features:**
 - Multi-PR support with tabs
-- Collapsible duplicate groups
-- Thread conversation view
+- Collapsible duplicate groups with persistent state
+- Thread conversation view with code context
+- Syntax-highlighted code snippets (Solidity, JS)
+- Exact repo line numbers in code blocks
 - Smart notifications
 - LSR assignment system
 - Table filtering
 - Progress tracking
+- Bulk collapse/expand all comments
+- Clickable duplicate group navigation
 
 ---
 
