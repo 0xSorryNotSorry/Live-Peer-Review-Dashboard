@@ -18,10 +18,30 @@ npm install
 ```
 
 **Configure:**
-Create a `.env` file:
+1. Create a `.env` file:
 ```bash
 GITHUB_TOKEN=your_github_token_here
 ```
+
+2. Create `config.json` (copy from `config.example.json`):
+```json
+{
+  "repositories": [
+    {
+      "owner": "your-org",
+      "repo": "your-repo-name",
+      "pullRequestNumber": 1,
+      "customLabel": "Project Name"
+    }
+  ],
+  "name": "My Review Dashboard"
+}
+```
+
+3. **(Optional)** Create researcher files for per-PR tracking:
+   - File naming: `researchers-{owner}-{repo}-{prNumber}.json`
+   - See `researchers.example.json` for template
+   - **If you skip this:** Dashboard works fine, just won't show researcher-specific stats
 
 **Run:**
 ```bash
@@ -388,9 +408,11 @@ node main.js --config-path=./config.json
 - Set LSR for team coordination
 
 **Troubleshooting:**
+- **Showing 0 comments?** Check that `config.json` exists and has the correct owner/repo/PR number
+- **Still 0 comments?** Verify your GitHub token has `repo` scope and can access the repository
+- **Missing researcher stats?** Create `researchers-{owner}-{repo}-{prNumber}.json` files (optional)
 - Not seeing updates? Click "⚡ Force Refresh"
 - Wrong PR showing? Check active tab at top
-- Missing researchers? Configure them per PR
 
 ---
 

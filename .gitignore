@@ -1,4 +1,6 @@
 *config.json
+!config.example.json
+researchers-*.json
 node_modules
 .env
 .DS_Store

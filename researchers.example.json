@@ -1,0 +1,18 @@
+{
+  "owner": "OWNER_NAME",
+  "repo": "REPO_NAME",
+  "prNumber": 1,
+  "researchers": [
+    {
+      "handle": "github_username_1"
+    },
+    {
+      "handle": "github_username_2"
+    },
+    {
+      "handle": "github_username_3"
+    }
+  ],
+  "lsr": "lead_researcher_github_username"
+}
+
