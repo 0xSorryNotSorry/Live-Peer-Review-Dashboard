@@ -1146,9 +1146,9 @@ async function addNewPRFromUrl() {
             
             alert('✅ PR added successfully!');
             
-            // Close modal and load data
+            // Close modal and force refresh to fetch fresh data (bypass cache)
             document.getElementById('prManagementModal').style.display = 'none';
-            loadData();
+            loadData(true); // Force refresh for newly added PR
         } else {
             alert('❌ ' + (data.error || 'Failed to add PR'));
         }
@@ -1226,9 +1226,9 @@ async function addNewPR() {
             
             alert('✅ PR added successfully!');
             
-            // Close modal and load data
+            // Close modal and force refresh to fetch fresh data (bypass cache)
             document.getElementById('prManagementModal').style.display = 'none';
-            loadData();
+            loadData(true); // Force refresh for newly added PR
         } else {
             alert('❌ ' + (data.error || 'Failed to add PR'));
         }
