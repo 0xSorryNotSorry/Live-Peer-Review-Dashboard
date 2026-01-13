@@ -1099,6 +1099,8 @@ async function addNewPRFromUrl() {
         pr.pullRequestNumber === parsed.pullRequestNumber
     );
     
+    let allowDuplicate = false;
+    
     if (existingIndex !== -1) {
         const choice = confirm(
             `⚠️ This PR already exists at position ${existingIndex + 1}.\n\n` +
@@ -1115,14 +1117,15 @@ async function addNewPRFromUrl() {
             document.getElementById('newPrUrl').value = '';
             return;
         }
-        // If Cancel, continue to add as new entry (Save As)
+        // If Cancel, allow duplicate
+        allowDuplicate = true;
     }
     
     try {
         const response = await fetch('/api/prs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(parsed)
+            body: JSON.stringify({ ...parsed, allowDuplicate })
         });
         
         const data = await response.json();
@@ -1171,6 +1174,8 @@ async function addNewPR() {
         pr.pullRequestNumber === pullRequestNumber
     );
     
+    let allowDuplicate = false;
+    
     if (existingIndex !== -1) {
         const choice = confirm(
             `⚠️ This PR already exists at position ${existingIndex + 1}.\n\n` +
@@ -1189,14 +1194,15 @@ async function addNewPR() {
             document.getElementById('newPrNumber').value = '';
             return;
         }
-        // If Cancel, continue to add as new entry (Save As)
+        // If Cancel, allow duplicate
+        allowDuplicate = true;
     }
     
     try {
         const response = await fetch('/api/prs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ owner, repo, pullRequestNumber })
+            body: JSON.stringify({ owner, repo, pullRequestNumber, allowDuplicate })
         });
         
         const data = await response.json();

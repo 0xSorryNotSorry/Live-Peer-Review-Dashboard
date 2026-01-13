@@ -426,7 +426,7 @@ app.get("/api/prs", async (req, res) => {
 // API: Add PR
 app.post("/api/prs", async (req, res) => {
     try {
-        const { owner, repo, pullRequestNumber } = req.body;
+        const { owner, repo, pullRequestNumber, allowDuplicate } = req.body;
 
         if (!owner || !repo || !pullRequestNumber) {
             return res.status(400).json({ error: "Missing required fields" });
@@ -434,22 +434,25 @@ app.post("/api/prs", async (req, res) => {
 
         const config = (await loadConfig()) || { repositories: [], name: "Audit Review" };
 
-        // Check if PR already exists
-        const exists = config.repositories.some(
-            (r) =>
-                r.owner === owner &&
-                r.repo === repo &&
-                r.pullRequestNumber === pullRequestNumber,
-        );
+        // Check if PR already exists (unless explicitly allowing duplicates)
+        if (!allowDuplicate) {
+            const exists = config.repositories.some(
+                (r) =>
+                    r.owner === owner &&
+                    r.repo === repo &&
+                    r.pullRequestNumber === pullRequestNumber,
+            );
 
-        if (exists) {
-            return res.status(400).json({ error: "PR already exists" });
+            if (exists) {
+                return res.status(400).json({ error: "PR already exists" });
+            }
         }
 
         config.repositories.push({ owner, repo, pullRequestNumber });
         await fs.writeFile(getConfigFilePath(), JSON.stringify(config, null, 2));
 
-        console.log(`✅ Added PR: ${owner}/${repo}#${pullRequestNumber}`);
+        const duplicateMsg = allowDuplicate ? " (duplicate allowed)" : "";
+        console.log(`✅ Added PR: ${owner}/${repo}#${pullRequestNumber}${duplicateMsg}`);
         res.json({ success: true, repositories: config.repositories });
     } catch (error) {
         console.error("Error adding PR:", error);
