@@ -44,12 +44,14 @@ const undupeFlags = {};
 const prDataCache = new Map();
 const CACHE_TTL = 30 * 1000; // 30 seconds
 
-function getCacheKey(owner, repo, prNumber) {
-    return `${owner}/${repo}#${prNumber}`;
+function getCacheKey(owner, repo, prNumber, prIndex = null) {
+    // Include prIndex to support duplicate PRs with different researcher configs
+    const baseKey = `${owner}/${repo}#${prNumber}`;
+    return prIndex !== null ? `${baseKey}@${prIndex}` : baseKey;
 }
 
-function getCachedData(owner, repo, prNumber) {
-    const key = getCacheKey(owner, repo, prNumber);
+function getCachedData(owner, repo, prNumber, prIndex = null) {
+    const key = getCacheKey(owner, repo, prNumber, prIndex);
     const cached = prDataCache.get(key);
 
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
@@ -61,8 +63,8 @@ function getCachedData(owner, repo, prNumber) {
     return null;
 }
 
-function setCachedData(owner, repo, prNumber, data) {
-    const key = getCacheKey(owner, repo, prNumber);
+function setCachedData(owner, repo, prNumber, data, prIndex = null) {
+    const key = getCacheKey(owner, repo, prNumber, prIndex);
     prDataCache.set(key, {
         data: data,
         timestamp: Date.now(),
@@ -70,8 +72,8 @@ function setCachedData(owner, repo, prNumber, data) {
     console.log(`💾 Cached data for ${key}`);
 }
 
-function invalidateCache(owner, repo, prNumber) {
-    const key = getCacheKey(owner, repo, prNumber);
+function invalidateCache(owner, repo, prNumber, prIndex = null) {
+    const key = getCacheKey(owner, repo, prNumber, prIndex);
     prDataCache.delete(key);
     console.log(`🗑️ Cache invalidated for ${key}`);
 }
@@ -212,7 +214,7 @@ app.get("/api/data", async (req, res) => {
 
         // Check cache first (unless force refresh)
         if (!forceRefresh) {
-            const cached = getCachedData(repo.owner, repo.repo, repo.pullRequestNumber);
+            const cached = getCachedData(repo.owner, repo.repo, repo.pullRequestNumber, prIndex);
             if (cached) {
                 return res.json(cached);
             }
@@ -295,8 +297,8 @@ app.get("/api/data", async (req, res) => {
             researchersConfig,
         };
 
-        // Cache the data
-        setCachedData(repo.owner, repo.repo, repo.pullRequestNumber, responseData);
+        // Cache the data (with prIndex for duplicate PR support)
+        setCachedData(repo.owner, repo.repo, repo.pullRequestNumber, responseData, prIndex);
 
         res.json(responseData);
     } catch (error) {
