@@ -1132,6 +1132,11 @@ async function addNewPRFromUrl() {
         
         if (data.success) {
             allPRs = data.repositories;
+            
+            // Switch to the newly added PR
+            activePRIndex = allPRs.length - 1;
+            localStorage.setItem(ACTIVE_PR_KEY, activePRIndex);
+            
             renderPRList();
             renderPRTabs();
             
@@ -1139,10 +1144,6 @@ async function addNewPRFromUrl() {
             document.getElementById('newPrUrl').value = '';
             
             alert('✅ PR added successfully!');
-            
-            // Switch to the newly added PR
-            activePRIndex = allPRs.length - 1;
-            renderPRTabs();
             
             // Close modal and load data
             document.getElementById('prManagementModal').style.display = 'none';
@@ -1209,6 +1210,11 @@ async function addNewPR() {
         
         if (data.success) {
             allPRs = data.repositories;
+            
+            // Switch to the newly added PR
+            activePRIndex = allPRs.length - 1;
+            localStorage.setItem(ACTIVE_PR_KEY, activePRIndex);
+            
             renderPRList();
             renderPRTabs();
             
@@ -1218,10 +1224,6 @@ async function addNewPR() {
             document.getElementById('newPrNumber').value = '';
             
             alert('✅ PR added successfully!');
-            
-            // Switch to the newly added PR
-            activePRIndex = allPRs.length - 1;
-            renderPRTabs();
             
             // Close modal and load data
             document.getElementById('prManagementModal').style.display = 'none';
