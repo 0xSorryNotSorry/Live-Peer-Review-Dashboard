@@ -442,6 +442,9 @@ body.dark-mode .pr-tab.active {
 /* PR List in Modal */
 .pr-list {
     margin-bottom: 30px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding-right: 10px;
 }
 
 .pr-url-input {

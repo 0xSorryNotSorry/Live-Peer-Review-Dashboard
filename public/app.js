@@ -921,13 +921,19 @@ async function loadAllPRs() {
 
 // Render PR tabs
 function renderPRTabs() {
+    const prTabsContainer = document.getElementById('prTabsContainer');
+    const tabsContainer = document.getElementById('prTabs');
+    
+    // Always show the container so "Manage PRs" button is visible
+    prTabsContainer.style.display = 'flex';
+    
     if (allPRs.length === 0) {
-        document.getElementById('prTabsContainer').style.display = 'none';
+        // Hide tabs but keep container visible for "Manage PRs" button
+        tabsContainer.style.display = 'none';
         return;
     }
     
-    document.getElementById('prTabsContainer').style.display = 'flex';
-    const tabsContainer = document.getElementById('prTabs');
+    tabsContainer.style.display = 'flex';
     
     let html = '';
     allPRs.forEach((pr, index) => {
@@ -1086,6 +1092,32 @@ async function addNewPRFromUrl() {
         return;
     }
     
+    // Check if PR already exists
+    const existingIndex = allPRs.findIndex(pr => 
+        pr.owner === parsed.owner && 
+        pr.repo === parsed.repo && 
+        pr.pullRequestNumber === parsed.pullRequestNumber
+    );
+    
+    if (existingIndex !== -1) {
+        const choice = confirm(
+            `⚠️ This PR already exists at position ${existingIndex + 1}.\n\n` +
+            `Click OK to SWITCH to existing PR\n` +
+            `Click Cancel to SAVE AS new entry (allows different researcher config)`
+        );
+        
+        if (choice) {
+            // Switch to existing PR
+            activePRIndex = existingIndex;
+            renderPRTabs();
+            document.getElementById('prManagementModal').style.display = 'none';
+            loadData();
+            document.getElementById('newPrUrl').value = '';
+            return;
+        }
+        // If Cancel, continue to add as new entry (Save As)
+    }
+    
     try {
         const response = await fetch('/api/prs', {
             method: 'POST',
@@ -1130,6 +1162,34 @@ async function addNewPR() {
     if (!owner || !repo || !pullRequestNumber) {
         alert('Please fill in all fields');
         return;
+    }
+    
+    // Check if PR already exists
+    const existingIndex = allPRs.findIndex(pr => 
+        pr.owner === owner && 
+        pr.repo === repo && 
+        pr.pullRequestNumber === pullRequestNumber
+    );
+    
+    if (existingIndex !== -1) {
+        const choice = confirm(
+            `⚠️ This PR already exists at position ${existingIndex + 1}.\n\n` +
+            `Click OK to SWITCH to existing PR\n` +
+            `Click Cancel to SAVE AS new entry (allows different researcher config)`
+        );
+        
+        if (choice) {
+            // Switch to existing PR
+            activePRIndex = existingIndex;
+            renderPRTabs();
+            document.getElementById('prManagementModal').style.display = 'none';
+            loadData();
+            document.getElementById('newPrOwner').value = '';
+            document.getElementById('newPrRepo').value = '';
+            document.getElementById('newPrNumber').value = '';
+            return;
+        }
+        // If Cancel, continue to add as new entry (Save As)
     }
     
     try {
@@ -1193,8 +1253,8 @@ async function removePR(index) {
                     renderPRTabs();
                     loadData();
                 } else {
-                    // No PRs left
-                    document.getElementById('prTabsContainer').style.display = 'none';
+                    // No PRs left - keep container visible for "Manage PRs" button
+                    renderPRTabs();
                     document.getElementById('content').style.display = 'none';
                 }
             } else if (index < activePRIndex) {
