@@ -123,9 +123,16 @@ async function loadConfig() {
 }
 
 // Load researchers config for a specific PR
-async function loadResearchers(owner, repo, prNumber) {
+async function loadResearchers(owner, repo, prNumber, prIndex = null) {
     try {
-        const filename = `researchers-${owner}-${repo}-${prNumber}.json`;
+        // For duplicate PRs, use index-specific config file
+        let filename;
+        if (prIndex !== null) {
+            filename = `researchers-${owner}-${repo}-${prNumber}-idx${prIndex}.json`;
+        } else {
+            filename = `researchers-${owner}-${repo}-${prNumber}.json`;
+        }
+        
         const data = await fs.readFile(dataPath(filename), "utf8");
         return JSON.parse(data);
     } catch (error) {
@@ -158,9 +165,15 @@ async function saveAssignments(assignments) {
 }
 
 // Save researchers config for a specific PR
-async function saveResearchers(owner, repo, prNumber, researchers) {
+async function saveResearchers(owner, repo, prNumber, researchers, prIndex = null) {
     await ensureDataDir();
-    const filename = `researchers-${owner}-${repo}-${prNumber}.json`;
+    // For duplicate PRs, use index-specific config file
+    let filename;
+    if (prIndex !== null) {
+        filename = `researchers-${owner}-${repo}-${prNumber}-idx${prIndex}.json`;
+    } else {
+        filename = `researchers-${owner}-${repo}-${prNumber}.json`;
+    }
     await fs.writeFile(dataPath(filename), JSON.stringify(researchers, null, 2));
 }
 
@@ -224,6 +237,7 @@ app.get("/api/data", async (req, res) => {
             repo.owner,
             repo.repo,
             repo.pullRequestNumber,
+            prIndex, // Pass prIndex for duplicate PR support
         );
         const assignments = await loadAssignments();
         const data = await getPRReviewCommentsWithReactions(
@@ -319,11 +333,12 @@ app.get("/api/data", async (req, res) => {
 // API: Get researchers for active PR
 app.get("/api/researchers", async (req, res) => {
     try {
-        const { owner, repo, prNumber } = req.query;
+        const { owner, repo, prNumber, prIndex } = req.query;
         if (!owner || !repo || !prNumber) {
             return res.status(400).json({ error: "Missing PR info" });
         }
-        const researchers = await loadResearchers(owner, repo, parseInt(prNumber));
+        const index = prIndex !== undefined ? parseInt(prIndex) : null;
+        const researchers = await loadResearchers(owner, repo, parseInt(prNumber), index);
         res.json(researchers);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -333,11 +348,12 @@ app.get("/api/researchers", async (req, res) => {
 // API: Update researchers for active PR
 app.post("/api/researchers", async (req, res) => {
     try {
-        const { owner, repo, prNumber, researchers, lsr } = req.body;
+        const { owner, repo, prNumber, researchers, lsr, prIndex } = req.body;
         if (!owner || !repo || !prNumber) {
             return res.status(400).json({ error: "Missing PR info" });
         }
-        await saveResearchers(owner, repo, parseInt(prNumber), { researchers, lsr });
+        const index = prIndex !== undefined ? parseInt(prIndex) : null;
+        await saveResearchers(owner, repo, parseInt(prNumber), { researchers, lsr }, index);
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: error.message });

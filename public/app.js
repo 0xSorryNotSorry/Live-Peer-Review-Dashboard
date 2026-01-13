@@ -1029,9 +1029,9 @@ async function switchToPR(index) {
         document.getElementById('prRepo').value = activeRepo.repo;
         document.getElementById('prNumber').value = activeRepo.pullRequestNumber;
         
-        // Load researchers for this PR
+        // Load researchers for this PR (with prIndex for duplicate support)
         try {
-            const response = await fetch(`/api/researchers?owner=${activeRepo.owner}&repo=${activeRepo.repo}&prNumber=${activeRepo.pullRequestNumber}`);
+            const response = await fetch(`/api/researchers?owner=${activeRepo.owner}&repo=${activeRepo.repo}&prNumber=${activeRepo.pullRequestNumber}&prIndex=${activePRIndex}`);
             const config = await response.json();
             researchersConfig = config;
         } catch (error) {
@@ -2844,7 +2844,7 @@ async function loadResearchersModal() {
         }
         
         const activePR = allPRs[activePRIndex];
-        const response = await fetch(`/api/researchers?owner=${activePR.owner}&repo=${activePR.repo}&prNumber=${activePR.pullRequestNumber}`);
+        const response = await fetch(`/api/researchers?owner=${activePR.owner}&repo=${activePR.repo}&prNumber=${activePR.pullRequestNumber}&prIndex=${activePRIndex}`);
         const config = await response.json();
         researchersConfig = config;
         renderResearchersList();
@@ -2978,7 +2978,8 @@ async function saveResearchers() {
             repo: activePR.repo,
             prNumber: activePR.pullRequestNumber,
             researchers: researchersConfig.researchers,
-            lsr: researchersConfig.lsr
+            lsr: researchersConfig.lsr,
+            prIndex: activePRIndex // Include prIndex for duplicate PR support
         })
     });
     
