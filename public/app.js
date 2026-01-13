@@ -568,7 +568,8 @@ function getRepositoryKey(repository) {
     if (!repository || !repository.owner || !repository.repo || !repository.pullRequestNumber) {
         return 'default';
     }
-    return `${repository.owner}/${repository.repo}#${repository.pullRequestNumber}`;
+    // Include activePRIndex to support duplicate PRs with different configs
+    return `${repository.owner}/${repository.repo}#${repository.pullRequestNumber}@${activePRIndex}`;
 }
 
 function getStorageKey(prefix) {
