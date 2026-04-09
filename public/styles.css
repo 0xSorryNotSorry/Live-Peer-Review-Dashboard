@@ -373,6 +373,9 @@ select {
     font-size: 14px;
     font-weight: 500;
     position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
 }
 
 .pr-tab::after {
@@ -400,6 +403,23 @@ select {
     border-color: #007bff;
     background: #007bff;
     color: white;
+}
+
+.pr-tab-label {
+    min-width: 0;
+}
+
+.pr-tab-badge {
+    min-width: 22px;
+    height: 22px;
+    padding: 0 7px;
+    border-radius: 999px;
+    background: #dc2626;
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font: 700 11px/1 "Fira Code", monospace;
 }
 
 .btn-manage-prs {
@@ -437,6 +457,11 @@ body.dark-mode .pr-tab.active {
     border-color: #7CFC00;
     background: #7CFC00;
     color: #003300;
+}
+
+body.dark-mode .pr-tab-badge {
+    background: #991b1b;
+    color: #fee2e2;
 }
 
 /* PR List in Modal */
@@ -1786,27 +1811,29 @@ body.dark-mode .collapse-all-btn.collapsed:hover {
     position: fixed;
     top: 80px;
     right: 20px;
-    width: 400px;
-    max-height: 600px;
+    width: min(860px, calc(100vw - 40px));
+    height: min(680px, calc(100vh - 110px));
     background: white;
-    border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    border-radius: 22px;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.2);
     z-index: 1002;
     overflow: hidden;
+    border: 1px solid #dbe4f0;
 }
 
 .notification-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 15px 20px;
-    background: #007bff;
-    color: white;
+    padding: 18px 22px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    color: #132033;
+    border-bottom: 1px solid #dbe4f0;
 }
 
 .notification-header h3 {
     margin: 0;
-    font-size: 16px;
+    font: 700 20px/1 "Fira Code", monospace;
 }
 
 .notification-actions {
@@ -1816,70 +1843,195 @@ body.dark-mode .collapse-all-btn.collapsed:hover {
 }
 
 .notif-action-btn {
-    background: rgba(255, 255, 255, 0.2);
-    border: none;
-    color: white;
-    font-size: 16px;
+    background: #f8fbff;
+    border: 1px solid #dbe4f0;
+    color: #132033;
+    font: 700 12px/1 "Fira Code", monospace;
     cursor: pointer;
-    padding: 6px 10px;
-    border-radius: 4px;
+    padding: 10px 12px;
+    border-radius: 12px;
     transition: all 0.2s;
 }
 
 .notif-action-btn:hover {
-    background: rgba(255, 255, 255, 0.3);
+    background: #eef4ff;
+    border-color: #bfd3ff;
 }
 
 .close-panel {
     background: none;
-    border: none;
-    color: white;
+    border: 1px solid #dbe4f0;
+    color: #132033;
     font-size: 24px;
     cursor: pointer;
     padding: 0;
-    width: 30px;
-    height: 30px;
+    width: 38px;
+    height: 38px;
     display: flex;
     align-items: center;
     justify-content: center;
+    border-radius: 12px;
 }
 
 .close-panel:hover {
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 4px;
+    background: #eef4ff;
+    border-color: #bfd3ff;
+}
+
+.notification-panel-body {
+    height: calc(100% - 78px);
+    display: grid;
+    grid-template-columns: 250px minmax(0, 1fr);
+    min-height: 0;
+}
+
+.notification-panel-tabs {
+    border-right: 1px solid #dbe4f0;
+    padding: 14px;
+    background: linear-gradient(180deg, #f8fbff 0%, #f4f7fb 100%);
+    overflow-y: auto;
+}
+
+.notification-tab {
+    width: 100%;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #132033;
+    border-radius: 18px;
+    padding: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    text-align: left;
+    margin-bottom: 10px;
+}
+
+.notification-tab:hover {
+    border-color: #dbe4f0;
+    background: rgba(255,255,255,0.8);
+}
+
+.notification-tab.active {
+    background: #e8f0ff;
+    border-color: #bfd3ff;
+}
+
+.notification-tab-label {
+    min-width: 0;
+    font: 700 14px/1.25 "Fira Code", monospace;
+    word-break: break-word;
+}
+
+.notification-tab-badge {
+    min-width: 26px;
+    height: 26px;
+    padding: 0 8px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #fee2e2;
+    color: #dc2626;
+    font: 700 11px/1 "Fira Code", monospace;
+}
+
+.notification-tab-badge.zero {
+    background: #e2e8f0;
+    color: #64748b;
+}
+
+.notification-panel-feed {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.notification-feed-head {
+    padding: 18px 20px 14px;
+    border-bottom: 1px solid #dbe4f0;
+}
+
+.notification-feed-title-wrap h4 {
+    margin: 0 0 6px;
+    font: 700 18px/1.1 "Fira Code", monospace;
+    color: #132033;
+}
+
+.notification-feed-title-wrap p {
+    margin: 0;
+    font-size: 13px;
+    color: #66758c;
 }
 
 .notification-list {
-    max-height: 540px;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 10px;
+    padding: 14px;
 }
 
 .notification-item {
-    padding: 12px;
-    margin-bottom: 8px;
-    background: #f8f9fa;
-    border-left: 3px solid #007bff;
-    border-radius: 4px;
+    padding: 16px;
+    margin-bottom: 10px;
+    background: #f8fbff;
+    border: 1px solid #dbe4f0;
+    border-left: none;
+    border-radius: 18px;
     cursor: pointer;
     transition: all 0.2s;
 }
 
 .notification-item:hover {
-    background: #e9ecef;
-    transform: translateX(-2px);
+    background: #ffffff;
+    border-color: #bfd3ff;
+    transform: translateY(-1px);
 }
 
 .notification-item.unread {
-    background: #fff3cd;
-    border-left-color: #ffc107;
+    background: #fffaf0;
+    border-color: #ffd27b;
     font-weight: 500;
+    box-shadow: inset 3px 0 0 #f59e0b;
 }
 
 .notification-item.read {
-    background: #f8f9fa;
-    border-left-color: #6c757d;
+    background: #f8fbff;
     opacity: 0.7;
+}
+
+.notification-item-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.notification-type-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 6px 10px;
+    background: #e8f0ff;
+    color: #2563eb;
+    font: 700 11px/1 "Fira Code", monospace;
+    text-transform: uppercase;
+}
+
+.notification-type-badge.reaction {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
+.notification-type-badge.resolution {
+    background: #fee2e2;
+    color: #dc2626;
 }
 
 .notification-author {
@@ -1897,6 +2049,30 @@ body.dark-mode .collapse-all-btn.collapsed:hover {
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     margin-bottom: 5px;
+}
+
+.notification-meta-row {
+    margin-top: 12px;
+}
+
+.notification-pr-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 7px 10px;
+    background: #eef2f7;
+    color: #475569;
+    font: 700 11px/1 "Fira Code", monospace;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+
+.notification-pr-pill:hover {
+    background: #e8f0ff;
+    color: #2563eb;
+    border-color: #bfd3ff;
 }
 
 .notif-link {
@@ -1942,32 +2118,85 @@ body.dark-mode .notification-panel {
 }
 
 body.dark-mode .notification-header {
-    background: #7CFC00;
-    color: #003300;
+    background: #111827;
+    color: #f8fafc;
+    border-bottom-color: #374151;
 }
 
 body.dark-mode .close-panel {
-    color: #003300;
+    color: #f8fafc;
+    border-color: #374151;
+}
+
+body.dark-mode .close-panel:hover,
+body.dark-mode .notif-action-btn:hover {
+    background: #1f2937;
+}
+
+body.dark-mode .notif-action-btn {
+    background: #111827;
+    border-color: #374151;
+    color: #f8fafc;
+}
+
+body.dark-mode .notification-panel-body {
+    background: #0f172a;
+}
+
+body.dark-mode .notification-panel-tabs {
+    background: #111827;
+    border-right-color: #374151;
+}
+
+body.dark-mode .notification-tab {
+    color: #f8fafc;
+}
+
+body.dark-mode .notification-tab:hover {
+    border-color: #334155;
+    background: #0f172a;
+}
+
+body.dark-mode .notification-tab.active {
+    background: rgba(37, 99, 235, 0.18);
+    border-color: rgba(96, 165, 250, 0.45);
+}
+
+body.dark-mode .notification-tab-badge.zero {
+    background: #334155;
+    color: #cbd5e1;
+}
+
+body.dark-mode .notification-feed-head {
+    border-bottom-color: #374151;
+}
+
+body.dark-mode .notification-feed-title-wrap h4 {
+    color: #f8fafc;
+}
+
+body.dark-mode .notification-feed-title-wrap p {
+    color: #94a3b8;
 }
 
 body.dark-mode .notification-item {
-    background: #374151;
-    border-left-color: #7CFC00;
+    background: #111827;
+    border-color: #334155;
 }
 
 body.dark-mode .notification-item:hover {
-    background: #4b5563;
+    background: #0f172a;
+    border-color: #475569;
 }
 
 body.dark-mode .notification-item.unread {
-    background: rgba(255, 193, 7, 0.2);
-    border-left-color: #ffc107;
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.45);
     font-weight: 500;
 }
 
 body.dark-mode .notification-item.read {
-    background: #374151;
-    border-left-color: #6c757d;
+    background: #111827;
     opacity: 0.7;
 }
 
@@ -1983,8 +2212,41 @@ body.dark-mode .reaction-mini {
     background: rgba(255, 255, 255, 0.1);
 }
 
+body.dark-mode .notification-pr-pill {
+    background: #1e293b;
+    color: #cbd5e1;
+}
+
+body.dark-mode .notification-pr-pill:hover {
+    background: rgba(37, 99, 235, 0.2);
+    color: #dbeafe;
+    border-color: rgba(96, 165, 250, 0.45);
+}
+
 body.dark-mode .no-notifications {
     color: #9ca3af;
+}
+
+@media (max-width: 900px) {
+    .notification-panel {
+        top: 20px;
+        right: 20px;
+        left: 20px;
+        width: auto;
+        height: min(720px, calc(100vh - 40px));
+    }
+
+    .notification-panel-body {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+    }
+
+    .notification-panel-tabs {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        border-right: none;
+        border-bottom: 1px solid #dbe4f0;
+    }
 }
 
 /* LSR Assignment Modal */
@@ -2169,4 +2431,3 @@ body.dark-mode .collapsed-group-last {
         border-bottom: 1px solid #ddd !important;
     }
 }
-

@@ -13,6 +13,8 @@ let notifications = [];
 let lastSeenComments = new Set();
 let currentLSRAssignment = null; // Stores {groupNumber, primaryCommentUrl}
 let authenticatedUser = null; // GitHub token owner
+let currentNotificationFilter = 'all';
+let notificationSyncRequestId = 0;
 
 // Fetch authenticated user (token owner)
 async function fetchAuthenticatedUser() {
@@ -73,6 +75,12 @@ const ACTIVE_PR_KEY = 'arm-active-pr';
 const REPORT_STATUS_PREFIX = 'arm-report-status:';
 const COMMENT_COLLAPSE_PREFIX = 'arm-comment-collapse:';
 const DUP_GROUP_COLLAPSE_PREFIX = 'arm-dup-group-collapse:';
+const NOTIFICATION_INBOX_KEY = 'arm-global-notification-inbox';
+const NOTIFICATION_FIRST_SEEN_KEY = 'arm-global-notification-first-seen';
+const NOTIFICATION_FILTER_KEY = 'arm-global-notification-filter';
+const NOTIFICATION_BOOTSTRAP_PREFIX = 'arm-global-notification-bootstrap';
+const NOTIFICATION_SCHEMA_VERSION_KEY = 'arm-global-notification-schema-version';
+const NOTIFICATION_SCHEMA_VERSION = '1';
 
 function escapeAttribute(value) {
     if (value === undefined || value === null) return '';
@@ -99,6 +107,173 @@ function formatTimestamp(isoString) {
     if (minutes < 60) return `${minutes}m ago`;
     if (hours < 24) return `${hours}h ago`;
     return `${days}d ago`;
+}
+
+function sanitizeUrl(url) {
+    const raw = String(url || '').trim();
+    if (!raw) return '#';
+    try {
+        const parsed = new URL(raw, window.location.origin);
+        if (['http:', 'https:'].includes(parsed.protocol)) {
+            return parsed.href;
+        }
+    } catch (error) {
+        return '#';
+    }
+    return '#';
+}
+
+function getPrKey(repository, index) {
+    if (!repository) return `unknown@${index}`;
+    return `${repository.owner}/${repository.repo}#${repository.pullRequestNumber}@${index}`;
+}
+
+function getPrLabel(repository) {
+    if (!repository) return 'Unknown';
+    return repository.customLabel || `${repository.repo}#${repository.pullRequestNumber}`;
+}
+
+function loadNotificationFilterState() {
+    try {
+        return localStorage.getItem(NOTIFICATION_FILTER_KEY) || 'all';
+    } catch (error) {
+        return 'all';
+    }
+}
+
+function saveNotificationFilterState(value) {
+    try {
+        localStorage.setItem(NOTIFICATION_FILTER_KEY, value || 'all');
+    } catch (error) {
+        console.error('Failed to save notification filter state:', error);
+    }
+}
+
+function loadNotificationInbox() {
+    try {
+        const raw = localStorage.getItem(NOTIFICATION_INBOX_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch (error) {
+        return [];
+    }
+}
+
+function saveNotificationInbox(items) {
+    try {
+        localStorage.setItem(NOTIFICATION_INBOX_KEY, JSON.stringify(items.slice(0, 500)));
+    } catch (error) {
+        console.error('Failed to save notification inbox:', error);
+    }
+}
+
+function loadNotificationFirstSeenMap() {
+    try {
+        const raw = localStorage.getItem(NOTIFICATION_FIRST_SEEN_KEY);
+        return raw ? new Map(JSON.parse(raw)) : new Map();
+    } catch (error) {
+        return new Map();
+    }
+}
+
+function saveNotificationFirstSeenMap(map) {
+    try {
+        localStorage.setItem(
+            NOTIFICATION_FIRST_SEEN_KEY,
+            JSON.stringify(Array.from(map.entries())),
+        );
+    } catch (error) {
+        console.error('Failed to save notification first-seen map:', error);
+    }
+}
+
+function setNotificationFirstSeen(firstSeenMap, id, fallbackValue = null) {
+    if (!firstSeenMap.has(id)) {
+        firstSeenMap.set(id, fallbackValue || new Date().toISOString());
+    }
+    return firstSeenMap.get(id);
+}
+
+function resetNotificationStore() {
+    notifications = [];
+    currentNotificationFilter = 'all';
+    saveNotificationInbox([]);
+    saveNotificationFirstSeenMap(new Map());
+    saveNotificationFilterState('all');
+    localStorage.setItem(NOTIFICATION_BOOTSTRAP_PREFIX, 'false');
+}
+
+function ensureNotificationSchemaVersion() {
+    try {
+        const currentVersion = localStorage.getItem(NOTIFICATION_SCHEMA_VERSION_KEY);
+        if (currentVersion !== NOTIFICATION_SCHEMA_VERSION) {
+            resetNotificationStore();
+            localStorage.setItem(NOTIFICATION_SCHEMA_VERSION_KEY, NOTIFICATION_SCHEMA_VERSION);
+        }
+    } catch (error) {
+        console.error('Failed to verify notification schema version:', error);
+    }
+}
+
+function getNotificationFilters() {
+    const filters = [{ key: 'all', label: 'All', prIndex: null }];
+    allPRs.forEach((pr, index) => {
+        filters.push({
+            key: getPrKey(pr, index),
+            label: getPrLabel(pr),
+            prIndex: index,
+        });
+    });
+    return filters;
+}
+
+function ensureValidNotificationFilter() {
+    const filters = getNotificationFilters();
+    if (!filters.some((filter) => filter.key === currentNotificationFilter)) {
+        currentNotificationFilter = 'all';
+    }
+    return filters;
+}
+
+function getUnreadNotificationsCount(filterKey = 'all') {
+    if (filterKey === 'all') {
+        return notifications.filter((notification) => !notification.read).length;
+    }
+    return notifications.filter(
+        (notification) => notification.prKey === filterKey && !notification.read,
+    ).length;
+}
+
+function getVisibleNotifications() {
+    if (currentNotificationFilter === 'all') {
+        return notifications;
+    }
+    return notifications.filter(
+        (notification) => notification.prKey === currentNotificationFilter,
+    );
+}
+
+function setNotificationFilter(filterKey) {
+    currentNotificationFilter = filterKey || 'all';
+    ensureValidNotificationFilter();
+    saveNotificationFilterState(currentNotificationFilter);
+    renderNotificationPanel();
+}
+
+async function activateNotificationFilter(filterKey, { syncMainTab = true } = {}) {
+    currentNotificationFilter = filterKey || 'all';
+    const filters = ensureValidNotificationFilter();
+    saveNotificationFilterState(currentNotificationFilter);
+
+    if (syncMainTab && currentNotificationFilter !== 'all') {
+        const targetFilter = filters.find((filter) => filter.key === currentNotificationFilter);
+        if (targetFilter && typeof targetFilter.prIndex === 'number' && targetFilter.prIndex !== activePRIndex) {
+            await switchToPR(targetFilter.prIndex);
+        } else {
+            renderNotificationPanel();
+        }
+    } else {
+        renderNotificationPanel();
+    }
 }
 
 // Simple markdown formatter for comments
@@ -175,74 +350,6 @@ function saveDupGroupCollapseState(groupId, state) {
     localStorage.setItem(key, JSON.stringify(states));
 }
 
-// Load seen comments from localStorage
-function loadSeenComments() {
-    try {
-        const key = getStorageKey(SEEN_COMMENTS_PREFIX);
-        const data = localStorage.getItem(key);
-        return data ? new Set(JSON.parse(data)) : new Set();
-    } catch (error) {
-        return new Set();
-    }
-}
-
-// Load first-seen timestamps for notifications
-function loadFirstSeenTimestamps() {
-    try {
-        const key = getStorageKey(LAST_SEEN_TIMESTAMP_PREFIX);
-        const data = localStorage.getItem(key);
-        return data ? new Map(JSON.parse(data)) : new Map();
-    } catch (error) {
-        return new Map();
-    }
-}
-
-// Save first-seen timestamps
-function saveFirstSeenTimestamps(timestampsMap) {
-    try {
-        const key = getStorageKey(LAST_SEEN_TIMESTAMP_PREFIX);
-        localStorage.setItem(key, JSON.stringify(Array.from(timestampsMap.entries())));
-    } catch (error) {
-        console.error('Failed to save timestamps:', error);
-    }
-}
-
-// Save seen comments to localStorage
-function saveSeenComments() {
-    try {
-        const key = getStorageKey(SEEN_COMMENTS_PREFIX);
-        localStorage.setItem(key, JSON.stringify(Array.from(lastSeenComments)));
-    } catch (error) {
-        console.error('Failed to save seen comments:', error);
-    }
-}
-
-// Load resolution states from localStorage
-function loadResolutionStates() {
-    try {
-        const key = getStorageKey(RESOLUTION_STATES_PREFIX);
-        const data = localStorage.getItem(key);
-        if (data) {
-            const obj = JSON.parse(data);
-            return new Map(Object.entries(obj));
-        }
-    } catch (error) {
-        console.error('Failed to load resolution states:', error);
-    }
-    return new Map();
-}
-
-// Save resolution states to localStorage
-function saveResolutionStates(statesMap) {
-    try {
-        const key = getStorageKey(RESOLUTION_STATES_PREFIX);
-        const obj = Object.fromEntries(statesMap);
-        localStorage.setItem(key, JSON.stringify(obj));
-    } catch (error) {
-        console.error('Failed to save resolution states:', error);
-    }
-}
-
 // Load report statuses from localStorage
 function loadReportStatuses() {
     try {
@@ -266,127 +373,171 @@ function saveReportStatus(commentUrl, status, partialIssue = '') {
     }
 }
 
-// Check for new comments and update notifications
-function checkForNewComments(rows) {
-    lastSeenComments = loadSeenComments();
-    const previousResolutionStates = loadResolutionStates();
-    const firstSeenTimestamps = loadFirstSeenTimestamps();
-    const currentResolutionStates = new Map();
-    notifications = [];
-    
-    rows.forEach(row => {
-        // Track current resolution state
-        currentResolutionStates.set(row.commentUrl, row.isResolved);
-        
-        // Check for resolved threads (always show in notifications)
+function buildNotificationsForData(data, prIndex, firstSeenMap) {
+    if (!data || data.error || !data.repository) {
+        return [];
+    }
+
+    const prKey = getPrKey(data.repository, prIndex);
+    const prLabel = getPrLabel(data.repository);
+    const built = [];
+
+    (data.rows || []).forEach((row) => {
         if (row.isResolved) {
-            const resolutionId = `${row.commentUrl}-resolved`;
-            const isRead = lastSeenComments.has(resolutionId);
-            
-            // Use first-seen timestamp for consistent ordering
-            if (!firstSeenTimestamps.has(resolutionId)) {
-                firstSeenTimestamps.set(resolutionId, new Date().toISOString());
-            }
-            
-            // Try to find who resolved it from thread comments
+            const resolutionId = `${prKey}::${row.commentUrl}::resolved`;
             let resolver = null;
+            let createdAt = null;
+
             if (row.threadReplies && row.threadReplies.length > 0) {
-                const resolutionComment = row.threadReplies.find(r => {
-                    const hasMessage = r.body && (
-                        r.body.includes('marked this conversation as resolved') ||
-                        r.body.includes('resolved this conversation')
+                const resolutionComment = row.threadReplies.find((reply) => {
+                    const body = reply.body || '';
+                    return (
+                        body.includes('marked this conversation as resolved') ||
+                        body.includes('resolved this conversation')
                     );
-                    return hasMessage;
                 });
                 if (resolutionComment) {
                     resolver = resolutionComment.author;
+                    createdAt = resolutionComment.createdAt || null;
                 }
             }
-            
-            notifications.push({
+
+            built.push({
                 id: resolutionId,
+                prKey,
+                prLabel,
+                prIndex,
                 type: 'resolution',
+                targetType: 'thread',
                 threadUrl: row.commentUrl,
                 issueNumber: row.issueNumber,
                 issueTitle: row.Comment.text,
-                resolver: resolver,
-                createdAt: firstSeenTimestamps.get(resolutionId),
-                read: isRead
+                resolver,
+                createdAt: setNotificationFirstSeen(firstSeenMap, resolutionId, createdAt),
             });
         }
-        
-        // Check for new replies in thread
-        if (row.threadReplies && row.threadReplies.length > 0) {
-            row.threadReplies.forEach(reply => {
-                const commentId = `${row.commentUrl}-reply-${reply.id}`;
-                const isRead = lastSeenComments.has(commentId);
-                
-                notifications.push({
-                    id: commentId,
-                    type: 'comment',
+
+        (row.threadReplies || []).forEach((reply) => {
+            built.push({
+                id: `${prKey}::${row.commentUrl}::reply::${reply.id}`,
+                prKey,
+                prLabel,
+                prIndex,
+                type: 'comment',
+                targetType: 'thread',
+                threadUrl: row.commentUrl,
+                issueNumber: row.issueNumber,
+                issueTitle: row.Comment.text,
+                author: reply.author,
+                body: reply.body,
+                reactions: reply.reactions || [],
+                createdAt: reply.createdAt,
+            });
+        });
+
+        if (row.reactions) {
+            Object.keys(row.reactions).forEach((user) => {
+                if (!row.reactions[user] || user === row.proposer) {
+                    return;
+                }
+
+                const emoji = row[user];
+                if (!emoji || emoji === 'Proposer') {
+                    return;
+                }
+
+                const reactionId = `${prKey}::${row.commentUrl}::reaction::${user}`;
+                built.push({
+                    id: reactionId,
+                    prKey,
+                    prLabel,
+                    prIndex,
+                    type: 'reaction',
+                    targetType: 'thread',
                     threadUrl: row.commentUrl,
-                    author: reply.author,
-                    body: reply.body,
-                    createdAt: reply.createdAt,
                     issueNumber: row.issueNumber,
                     issueTitle: row.Comment.text,
-                    reactions: reply.reactions || [],
-                    read: isRead
+                    author: user,
+                    emoji,
+                    createdAt: setNotificationFirstSeen(firstSeenMap, reactionId),
                 });
             });
         }
-        
-        // Check for new reactions on the main comment
-        if (row.reactions) {
-            Object.keys(row.reactions).forEach(user => {
-                if (row.reactions[user] && user !== row.proposer) {
-                    const reactionId = `${row.commentUrl}-reaction-${user}`;
-                    const isRead = lastSeenComments.has(reactionId);
-                    
-                    // Get the emoji for this user
-                    const emoji = row[user]; // This contains the emoji (👍, 👎, etc.)
-                    
-                    if (emoji && emoji !== 'Proposer') {
-                        // Use first-seen timestamp for consistent ordering
-                        if (!firstSeenTimestamps.has(reactionId)) {
-                            firstSeenTimestamps.set(reactionId, new Date().toISOString());
-                        }
-                        
-                        notifications.push({
-                            id: reactionId,
-                            type: 'reaction',
-                            threadUrl: row.commentUrl,
-                            author: user,
-                            emoji: emoji,
-                            issueNumber: row.issueNumber,
-                            issueTitle: row.Comment.text,
-                            createdAt: firstSeenTimestamps.get(reactionId),
-                            read: isRead
-                        });
-                    }
-                }
-            });
-        }
     });
-    
-    // Save current resolution states and timestamps for next comparison
-    saveResolutionStates(currentResolutionStates);
-    saveFirstSeenTimestamps(firstSeenTimestamps);
-    
-    // Sort by most recent first (newest at top)
-    notifications.sort((a, b) => {
-        const dateA = new Date(a.createdAt).getTime();
-        const dateB = new Date(b.createdAt).getTime();
-        return dateB - dateA; // Descending order (newest first)
-    });
-    
+
+    return built;
+}
+
+async function syncNotificationInbox(activeData = null, forceRefresh = false) {
+    if (!allPRs.length) {
+        notifications = [];
+        updateNotificationBadge();
+        renderPRTabs();
+        renderNotificationPanel();
+        return;
+    }
+
+    const syncId = ++notificationSyncRequestId;
+    const firstSeenMap = loadNotificationFirstSeenMap();
+    const previousInbox = loadNotificationInbox();
+    const previousById = new Map(previousInbox.map((item) => [item.id, item]));
+    const bootstrapped = localStorage.getItem(NOTIFICATION_BOOTSTRAP_PREFIX) === 'true';
+
+    const payloadResults = await Promise.allSettled(
+        allPRs.map(async (repository, index) => {
+            if (activeData && index === activePRIndex) {
+                return { index, data: activeData };
+            }
+
+            const url = `/api/data?prIndex=${index}${forceRefresh ? '&force=true' : ''}`;
+            const response = await fetch(url);
+            const data = await response.json();
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            return { index, data };
+        }),
+    );
+
+    const payloads = payloadResults
+        .filter((result) => result.status === 'fulfilled')
+        .map((result) => result.value);
+
+    if (syncId !== notificationSyncRequestId) {
+        return;
+    }
+
+    notifications = payloads
+        .flatMap(({ index, data }) => buildNotificationsForData(data, index, firstSeenMap))
+        .map((notification) => {
+            const previous = previousById.get(notification.id);
+            return {
+                ...notification,
+                read: previous ? !!previous.read : !bootstrapped,
+            };
+        })
+        .sort((left, right) => {
+            const leftDate = new Date(left.createdAt).getTime();
+            const rightDate = new Date(right.createdAt).getTime();
+            return rightDate - leftDate;
+        });
+
+    saveNotificationInbox(notifications);
+    saveNotificationFirstSeenMap(firstSeenMap);
+    if (!bootstrapped) {
+        localStorage.setItem(NOTIFICATION_BOOTSTRAP_PREFIX, 'true');
+    }
+
+    ensureValidNotificationFilter();
+    renderPRTabs();
     updateNotificationBadge();
+    renderNotificationPanel();
 }
 
 // Update notification badge count (only unread)
 function updateNotificationBadge() {
     const badge = document.getElementById('notificationBadge');
-    const unreadCount = notifications.filter(n => !n.read).length;
+    const unreadCount = getUnreadNotificationsCount('all');
     
     if (unreadCount > 0) {
         badge.textContent = unreadCount;
@@ -398,33 +549,70 @@ function updateNotificationBadge() {
 
 // Render notification panel
 function renderNotificationPanel() {
+    const tabList = document.getElementById('notificationTabList');
     const list = document.getElementById('notificationList');
-    
-    if (notifications.length === 0) {
-        list.innerHTML = '<p class="no-notifications">No new comments</p>';
+    const title = document.getElementById('notificationFeedTitle');
+    const subtitle = document.getElementById('notificationFeedSubtitle');
+    const empty = document.getElementById('notificationEmpty');
+    if (!tabList || !list || !title || !subtitle || !empty) return;
+
+    const filters = ensureValidNotificationFilter();
+    const visibleNotifications = getVisibleNotifications();
+    const activeFilter = filters.find((filter) => filter.key === currentNotificationFilter) || filters[0];
+    const unreadForFilter = getUnreadNotificationsCount(activeFilter.key);
+
+    tabList.innerHTML = filters.map((filter) => {
+        const unreadCount = getUnreadNotificationsCount(filter.key);
+        const activeClass = filter.key === currentNotificationFilter ? 'active' : '';
+        return `
+            <button class="notification-tab ${activeClass}" data-filter-key="${filter.key}">
+                <span class="notification-tab-label">${escapeHtml(filter.label)}</span>
+                <span class="notification-tab-badge ${unreadCount === 0 ? 'zero' : ''}">${unreadCount}</span>
+            </button>
+        `;
+    }).join('');
+
+    document.querySelectorAll('.notification-tab').forEach((button) => {
+        button.addEventListener('click', async () => {
+            await activateNotificationFilter(button.dataset.filterKey, { syncMainTab: true });
+        });
+    });
+
+    title.textContent = activeFilter.label === 'All' ? 'All Updates' : activeFilter.label;
+    subtitle.textContent = activeFilter.key === 'all'
+        ? `${notifications.length} updates across all PRs · ${unreadForFilter} unread`
+        : `${visibleNotifications.length} updates in this PR · ${unreadForFilter} unread`;
+
+    if (visibleNotifications.length === 0) {
+        list.innerHTML = '';
+        empty.style.display = 'block';
+        empty.textContent = 'No updates in this inbox.';
         return;
     }
-    
+
+    empty.style.display = 'none';
+
     let html = '';
-    notifications.forEach(notif => {
+    visibleNotifications.forEach(notif => {
         const readClass = notif.read ? 'read' : 'unread';
-        html += `<div class="notification-item ${readClass}" data-thread-url="${notif.threadUrl}" data-notif-id="${notif.id}">`;
+        html += `<div class="notification-item ${readClass}" data-notif-id="${notif.id}">`;
+        html += `<div class="notification-item-top">`;
+        html += `<span class="notification-type-badge ${notif.type}">${escapeHtml(notif.type)}</span>`;
+        html += `<span class="comment-time">${formatTimestamp(notif.createdAt)}</span>`;
+        html += `</div>`;
         
         if (notif.type === 'resolution') {
-            // Resolution notification
             const resolverText = notif.resolver ? ` by ${notif.resolver}` : '';
             html += `<div class="notification-author">✅ Thread #${notif.issueNumber} was resolved${resolverText}</div>`;
             html += `<div class="notification-preview">`;
-            html += `<a href="${notif.threadUrl}" target="_blank" class="notif-link">${escapeHtml(notif.issueTitle.substring(0, 80))}${notif.issueTitle.length > 80 ? '...' : ''}</a>`;
+            html += `<a href="${escapeAttribute(sanitizeUrl(notif.threadUrl))}" target="_blank" rel="noopener noreferrer" class="notif-link">${escapeHtml(notif.issueTitle.substring(0, 80))}${notif.issueTitle.length > 80 ? '...' : ''}</a>`;
             html += `</div>`;
         } else if (notif.type === 'reaction') {
-            // Reaction notification
             html += `<div class="notification-author">${notif.author} reacted with ${notif.emoji}</div>`;
             html += `<div class="notification-preview">`;
-            html += `<a href="${notif.threadUrl}" target="_blank" class="notif-link">${escapeHtml(notif.issueTitle.substring(0, 80))}${notif.issueTitle.length > 80 ? '...' : ''}</a>`;
+            html += `<a href="${escapeAttribute(sanitizeUrl(notif.threadUrl))}" target="_blank" rel="noopener noreferrer" class="notif-link">${escapeHtml(notif.issueTitle.substring(0, 80))}${notif.issueTitle.length > 80 ? '...' : ''}</a>`;
             html += `</div>`;
         } else {
-            // Comment notification
             html += `<div class="notification-author">${notif.author} commented on #${notif.issueNumber}</div>`;
             html += `<div class="notification-preview">${escapeHtml(notif.body.substring(0, 100))}${notif.body.length > 100 ? '...' : ''}</div>`;
             
@@ -437,8 +625,7 @@ function renderNotificationPanel() {
                 html += `</div>`;
             }
         }
-        
-        html += `<div class="comment-time">${formatTimestamp(notif.createdAt)}</div>`;
+        html += `<div class="notification-meta-row"><button class="notification-pr-pill" data-filter-key="${escapeAttribute(notif.prKey)}">${escapeHtml(notif.prLabel || 'Unknown')}</button></div>`;
         html += `</div>`;
     });
     
@@ -446,18 +633,36 @@ function renderNotificationPanel() {
     
     // Add click handlers
     document.querySelectorAll('.notification-item').forEach(item => {
-        item.addEventListener('click', function(e) {
-            // Don't trigger if clicking the link
+        item.addEventListener('click', async function(e) {
+            if (e.target.classList.contains('notification-pr-pill')) {
+                return;
+            }
             if (e.target.classList.contains('notif-link')) {
                 return;
             }
             
-            const threadUrl = this.dataset.threadUrl;
             const notifId = this.dataset.notifId;
-            scrollToComment(threadUrl);
+            const notif = notifications.find(n => n.id === notifId);
+            await openNotificationTarget(notif);
             markSingleNotificationAsRead(notifId);
         });
     });
+
+    document.querySelectorAll('.notification-pr-pill').forEach((pill) => {
+        pill.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            await activateNotificationFilter(pill.dataset.filterKey, { syncMainTab: true });
+        });
+    });
+}
+
+async function openNotificationTarget(notification) {
+    if (!notification) return;
+    if (typeof notification.prIndex === 'number' && notification.prIndex !== activePRIndex) {
+        await switchToPR(notification.prIndex);
+    }
+    scrollToComment(notification.threadUrl);
 }
 
 // Scroll to comment and expand thread
@@ -497,8 +702,6 @@ function scrollToComment(threadUrl) {
         }, 2000);
     }
     
-    // Close notification panel
-    document.getElementById('notificationPanel').style.display = 'none';
 }
 
 // Mark a single notification as read
@@ -506,54 +709,32 @@ function markSingleNotificationAsRead(notifId) {
     const notif = notifications.find(n => n.id === notifId);
     if (notif && !notif.read) {
         notif.read = true;
-        lastSeenComments.add(notif.id);
-        saveSeenComments();
+        saveNotificationInbox(notifications);
+        renderPRTabs();
         updateNotificationBadge();
         renderNotificationPanel();
     }
 }
 
-// Mark all notifications for a thread as read (but keep in list)
-function markNotificationAsRead(threadUrl) {
-    let badgeCountChanged = false;
-    
-    notifications.forEach(n => {
-        if (n.threadUrl === threadUrl && !n.read) {
-            n.read = true;
-            lastSeenComments.add(n.id);
-            badgeCountChanged = true;
+function markNotificationsByFilter(read) {
+    const visibleIds = new Set(getVisibleNotifications().map((notification) => notification.id));
+    notifications.forEach((notification) => {
+        if (visibleIds.has(notification.id)) {
+            notification.read = read;
         }
     });
-    
-    if (badgeCountChanged) {
-        saveSeenComments();
-        updateNotificationBadge();
-        renderNotificationPanel();
-    }
+    saveNotificationInbox(notifications);
+    renderPRTabs();
+    updateNotificationBadge();
+    renderNotificationPanel();
 }
 
-// Mark all notifications as read
 function markAllNotificationsRead() {
-    notifications.forEach(n => {
-        n.read = true;
-        lastSeenComments.add(n.id);
-    });
-    
-    saveSeenComments();
-    updateNotificationBadge();
-    renderNotificationPanel();
+    markNotificationsByFilter(true);
 }
 
-// Mark all notifications as unread
 function markAllNotificationsUnread() {
-    notifications.forEach(n => {
-        n.read = false;
-        lastSeenComments.delete(n.id);
-    });
-    
-    saveSeenComments();
-    updateNotificationBadge();
-    renderNotificationPanel();
+    markNotificationsByFilter(false);
 }
 
 function getRowKey(row) {
@@ -675,6 +856,9 @@ function applyNightModeState() {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    ensureNotificationSchemaVersion();
+    currentNotificationFilter = loadNotificationFilterState();
+    notifications = loadNotificationInbox();
     setupEventListeners();
     setupFloatingButtons();
     loadAllPRs();
@@ -854,7 +1038,7 @@ function setupFloatingButtons() {
     document.addEventListener('click', (e) => {
         if (notificationPanel.style.display === 'block' && 
             !notificationPanel.contains(e.target) && 
-            e.target !== notificationBtn) {
+            !notificationBtn.contains(e.target)) {
             notificationPanel.style.display = 'none';
         }
     });
@@ -939,9 +1123,15 @@ function renderPRTabs() {
     let html = '';
     allPRs.forEach((pr, index) => {
         const isActive = index === activePRIndex;
-        // Use custom label if set, otherwise use short format: repo#PR
         const label = pr.customLabel || `${pr.repo}#${pr.pullRequestNumber}`;
-        html += `<div class="pr-tab ${isActive ? 'active' : ''}" data-index="${index}" title="Double-click to edit label\n${pr.owner}/${pr.repo}#${pr.pullRequestNumber}">${label}</div>`;
+        const prKey = getPrKey(pr, index);
+        const unreadCount = getUnreadNotificationsCount(prKey);
+        html += `
+            <div class="pr-tab ${isActive ? 'active' : ''}" data-index="${index}" title="Double-click to edit label\n${pr.owner}/${pr.repo}#${pr.pullRequestNumber}">
+                <span class="pr-tab-label">${escapeHtml(label)}</span>
+                ${unreadCount > 0 ? `<span class="pr-tab-badge">${unreadCount}</span>` : ''}
+            </div>
+        `;
     });
     
     tabsContainer.innerHTML = html;
@@ -1041,7 +1231,7 @@ async function switchToPR(index) {
     }
     
     renderPRTabs();
-    loadData();
+    await loadData();
 }
 
 // Open PR management modal
@@ -1644,9 +1834,6 @@ function renderData(data) {
     latestRows = data.rows || [];
     latestCommenters = data.commenters || [];
     
-    // Check for new comments and update notifications
-    checkForNewComments(latestRows);
-    
     renderRepoInfo(data.repository);
     renderResearchersSection(data.researchersConfig, data.commenters);
     renderProgressCharts(latestRows, data.duplicateGroups, latestCommenters);
@@ -1659,6 +1846,10 @@ function renderData(data) {
     renderCommentsTable(latestRows, latestCommenters);
     updateColumnControls();
     persistExtraColumnState();
+
+    syncNotificationInbox(data).catch((error) => {
+        console.error('Failed to sync notification inbox:', error);
+    });
 }
 
 function renderRepoInfo(repo) {
@@ -3013,4 +3204,3 @@ async function undupeFinding(commentUrl, duplicateOf) {
         alert('❌ Error: ' + error.message);
     }
 }
-

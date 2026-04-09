@@ -269,7 +269,7 @@ Drag: Move button">
     </button>
 
     <!-- Notification Button -->
-    <div id="notificationBtn" class="notification-btn" title="New comments from researchers">
+    <div id="notificationBtn" class="notification-btn" title="Review updates">
         🔔
         <span class="notification-badge" id="notificationBadge" style="display: none;">0</span>
     </div>
@@ -277,15 +277,25 @@ Drag: Move button">
         <!-- Notification Panel -->
         <div id="notificationPanel" class="notification-panel" style="display: none;">
             <div class="notification-header">
-                <h3>New Comments</h3>
+                <h3>Updates</h3>
                 <div class="notification-actions">
                     <button id="markAllRead" class="notif-action-btn" title="Mark all as read">✓</button>
                     <button id="markAllUnread" class="notif-action-btn" title="Mark all as unread">↻</button>
                     <button class="close-panel">✕</button>
                 </div>
             </div>
-            <div class="notification-list" id="notificationList">
-                <p class="no-notifications">No new comments</p>
+            <div class="notification-panel-body">
+                <aside class="notification-panel-tabs" id="notificationTabList"></aside>
+                <section class="notification-panel-feed">
+                    <div class="notification-feed-head">
+                        <div class="notification-feed-title-wrap">
+                            <h4 id="notificationFeedTitle">All Updates</h4>
+                            <p id="notificationFeedSubtitle">No updates loaded yet.</p>
+                        </div>
+                    </div>
+                    <div id="notificationEmpty" class="no-notifications" style="display: none;">No updates in this inbox.</div>
+                    <div class="notification-list" id="notificationList"></div>
+                </section>
             </div>
         </div>
 
@@ -318,4 +328,3 @@ Drag: Move button">
     <script src="app.js"></script>
 </body>
 </html>
-
