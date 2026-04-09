@@ -326,6 +326,7 @@ export async function getPRReviewCommentsWithReactions(
                     hyperlink: commentUrl,
                     fullText: commentText 
                 },
+                createdAt: firstComment.createdAt || new Date().toISOString(),
                 proposer: commenter.login,
                 isDuplicate: isDuplicate,
                 duplicateOf: duplicateOriginalUrl,

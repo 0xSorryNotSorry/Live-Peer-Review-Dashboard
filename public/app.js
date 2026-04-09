@@ -80,7 +80,7 @@ const NOTIFICATION_FIRST_SEEN_KEY = 'arm-global-notification-first-seen';
 const NOTIFICATION_FILTER_KEY = 'arm-global-notification-filter';
 const NOTIFICATION_BOOTSTRAP_PREFIX = 'arm-global-notification-bootstrap';
 const NOTIFICATION_SCHEMA_VERSION_KEY = 'arm-global-notification-schema-version';
-const NOTIFICATION_SCHEMA_VERSION = '1';
+const NOTIFICATION_SCHEMA_VERSION = '2';
 
 function escapeAttribute(value) {
     if (value === undefined || value === null) return '';
@@ -383,12 +383,37 @@ function buildNotificationsForData(data, prIndex, firstSeenMap) {
     const built = [];
 
     (data.rows || []).forEach((row) => {
+        const rootSourceCreatedAt = row.createdAt || null;
+        built.push({
+            id: `${prKey}::${row.commentUrl}::root`,
+            prKey,
+            prLabel,
+            prIndex,
+            type: 'finding',
+            targetType: 'thread',
+            threadUrl: row.commentUrl,
+            issueNumber: row.issueNumber,
+            issueTitle: row.Comment.text,
+            author: row.proposer,
+            body: row.Comment.fullText || row.Comment.text,
+            sourceCreatedAt: rootSourceCreatedAt,
+            createdAt: rootSourceCreatedAt || setNotificationFirstSeen(firstSeenMap, `${prKey}::${row.commentUrl}::root`),
+            sortTimestamp: rootSourceCreatedAt || setNotificationFirstSeen(firstSeenMap, `${prKey}::${row.commentUrl}::root`),
+        });
+
         if (row.isResolved) {
             const resolutionId = `${prKey}::${row.commentUrl}::resolved`;
             let resolver = null;
             let createdAt = null;
+            let latestReplyCreatedAt = null;
 
             if (row.threadReplies && row.threadReplies.length > 0) {
+                latestReplyCreatedAt = row.threadReplies
+                    .map((reply) => reply.createdAt)
+                    .filter(Boolean)
+                    .sort()
+                    .at(-1) || null;
+
                 const resolutionComment = row.threadReplies.find((reply) => {
                     const body = reply.body || '';
                     return (
@@ -413,7 +438,17 @@ function buildNotificationsForData(data, prIndex, firstSeenMap) {
                 issueNumber: row.issueNumber,
                 issueTitle: row.Comment.text,
                 resolver,
-                createdAt: setNotificationFirstSeen(firstSeenMap, resolutionId, createdAt),
+                sourceCreatedAt: createdAt || latestReplyCreatedAt || row.createdAt || null,
+                createdAt:
+                    createdAt ||
+                    latestReplyCreatedAt ||
+                    row.createdAt ||
+                    setNotificationFirstSeen(firstSeenMap, resolutionId),
+                sortTimestamp:
+                    createdAt ||
+                    latestReplyCreatedAt ||
+                    row.createdAt ||
+                    setNotificationFirstSeen(firstSeenMap, resolutionId),
             });
         }
 
@@ -431,7 +466,9 @@ function buildNotificationsForData(data, prIndex, firstSeenMap) {
                 author: reply.author,
                 body: reply.body,
                 reactions: reply.reactions || [],
-                createdAt: reply.createdAt,
+                sourceCreatedAt: reply.createdAt || null,
+                createdAt: reply.createdAt || setNotificationFirstSeen(firstSeenMap, `${prKey}::${row.commentUrl}::reply::${reply.id}`),
+                sortTimestamp: reply.createdAt || setNotificationFirstSeen(firstSeenMap, `${prKey}::${row.commentUrl}::reply::${reply.id}`),
             });
         });
 
@@ -459,7 +496,9 @@ function buildNotificationsForData(data, prIndex, firstSeenMap) {
                     issueTitle: row.Comment.text,
                     author: user,
                     emoji,
+                    sourceCreatedAt: null,
                     createdAt: setNotificationFirstSeen(firstSeenMap, reactionId),
+                    sortTimestamp: setNotificationFirstSeen(firstSeenMap, reactionId),
                 });
             });
         }
@@ -517,8 +556,8 @@ async function syncNotificationInbox(activeData = null, forceRefresh = false) {
             };
         })
         .sort((left, right) => {
-            const leftDate = new Date(left.createdAt).getTime();
-            const rightDate = new Date(right.createdAt).getTime();
+            const leftDate = new Date(left.sortTimestamp || left.createdAt).getTime();
+            const rightDate = new Date(right.sortTimestamp || right.createdAt).getTime();
             return rightDate - leftDate;
         });
 
@@ -607,6 +646,9 @@ function renderNotificationPanel() {
             html += `<div class="notification-preview">`;
             html += `<a href="${escapeAttribute(sanitizeUrl(notif.threadUrl))}" target="_blank" rel="noopener noreferrer" class="notif-link">${escapeHtml(notif.issueTitle.substring(0, 80))}${notif.issueTitle.length > 80 ? '...' : ''}</a>`;
             html += `</div>`;
+        } else if (notif.type === 'finding') {
+            html += `<div class="notification-author">${escapeHtml(notif.author || 'Unknown')} opened issue #${notif.issueNumber}</div>`;
+            html += `<div class="notification-preview">${escapeHtml((notif.body || '').substring(0, 120))}${(notif.body || '').length > 120 ? '...' : ''}</div>`;
         } else if (notif.type === 'reaction') {
             html += `<div class="notification-author">${notif.author} reacted with ${notif.emoji}</div>`;
             html += `<div class="notification-preview">`;
