@@ -40,7 +40,7 @@
             
             <!-- Manual Input -->
             <div class="pr-inputs">
-                <input type="text" id="prOwner" placeholder="Owner (e.g., oak-security)">
+                <input type="text" id="prOwner" placeholder="Owner (e.g., your-org)">
                 <input type="text" id="prRepo" placeholder="Repository">
                 <input type="number" id="prNumber" placeholder="PR #">
                 <button id="syncPR" class="btn btn-primary">🔄 Sync PR</button>
@@ -109,7 +109,7 @@
                     <div class="divider">OR</div>
                     
                     <div class="pr-inputs">
-                        <input type="text" id="newPrOwner" placeholder="Owner (e.g., oak-security)">
+                        <input type="text" id="newPrOwner" placeholder="Owner (e.g., your-org)">
                         <input type="text" id="newPrRepo" placeholder="Repository">
                         <input type="number" id="newPrNumber" placeholder="PR #">
                     </div>
@@ -124,6 +124,25 @@
         <div id="content" style="display: none;">
             <!-- Repository Info -->
             <div class="repo-info" id="repoInfo"></div>
+
+            <div class="report-settings-section" id="reportSettingsSection">
+                <h3>Report Drafting</h3>
+                <div class="report-settings-grid">
+                    <input type="text" id="reportRepoPath" placeholder="Local repo path for code context">
+                    <select id="reportProvider">
+                        <option value="codex">Codex CLI</option>
+                        <option value="claude">Claude CLI</option>
+                    </select>
+                    <input type="text" id="reportAuditRef" placeholder="Audit ref or commit (optional)">
+                    <button id="saveReportSettings" class="btn btn-secondary">Save Draft Settings</button>
+                </div>
+                <div class="report-settings-meta">
+                    <span id="reportSettingsStatus">Draft output is local markdown unless Google Docs is configured on the server.</span>
+                </div>
+                <div class="report-settings-actions">
+                    <div id="fullReportDraftAction"></div>
+                </div>
+            </div>
 
             <!-- Researchers List -->
             <div class="researchers-section" id="researchersSection"></div>

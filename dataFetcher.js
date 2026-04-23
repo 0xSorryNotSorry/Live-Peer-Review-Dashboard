@@ -216,6 +216,9 @@ export async function getPRReviewCommentsWithReactions(
             reviewThreads(first: 100) {
               nodes {
                 isResolved
+                resolvedBy {
+                  login
+                }
                 path
                 line
                 diffSide
@@ -334,6 +337,7 @@ export async function getPRReviewCommentsWithReactions(
                 threadReplies: threadReplies,
                 replyCount: threadReplies.length,
                 isResolved: isResolved,
+                resolvedBy: thread.resolvedBy?.login || null,
                 // Code context from REST API (more reliable than GraphQL)
                 path: diffContext.path || thread.path || firstComment.path,
                 diffHunk: diffContext.diffHunk || firstComment.diffHunk,

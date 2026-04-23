@@ -7,6 +7,8 @@ node_modules
 *.xlsx
 *.pdf
 assignments.json
+report-draft-jobs.json
+report-drafts/
 server.log
 start.sh
 stop.sh

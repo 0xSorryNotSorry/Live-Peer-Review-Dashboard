@@ -31,12 +31,24 @@ GITHUB_TOKEN=your_github_token_here
       "owner": "your-org",
       "repo": "your-repo-name",
       "pullRequestNumber": 1,
-      "customLabel": "Project Name"
+      "customLabel": "Project Name",
+      "repoPath": "/absolute/path/to/your/local/repo",
+      "reportProvider": "codex",
+      "auditRef": "main"
     }
   ],
   "name": "My Review Dashboard"
 }
 ```
+
+Drafting fields:
+- `repoPath`: local checkout used for report draft generation
+- `reportProvider`: `codex` or `claude`
+- `auditRef`: optional commit / branch label passed into the draft prompt
+
+Google Docs fields:
+- `GOOGLE_SERVICE_ACCOUNT_FILE` or `GOOGLE_SERVICE_ACCOUNT_JSON`
+- `GOOGLE_DRIVE_FOLDER_ID`
 
 3. **(Optional)** Create researcher files for per-PR tracking:
    - File naming: `researchers-{owner}-{repo}-{prNumber}.json`
@@ -132,6 +144,35 @@ dup of #discussion_r456789
 - Duplicate groups show as D-1, D-2, etc.
 - Click group header to collapse/expand
 - First duplicate (D-X.1) stays visible when collapsed
+- Each duplicate group now has a background `Draft Report` action
+
+</details>
+
+<details>
+<summary><b>Report Drafting</b></summary>
+
+### Background Draft Generation
+
+**What it uses:**
+- only the root finding comments in the selected duplicate group or finding
+- file path, line, and diff hunk from the review data
+- local code context from the configured `repoPath`
+- bundled reporting instructions from repo-local prompt files
+
+**What it ignores:**
+- thread replies
+- reactions
+- PIC / assignment comments
+
+**How it behaves:**
+- single non-duplicate findings keep report-ready wording when possible
+- duplicate groups merge semantically when they describe one bug pattern across one or many locations
+- output is written in the background, without a modal
+
+**Output:**
+- always writes a local markdown draft under `report-drafts/`
+- optionally creates a Google Doc when `GOOGLE_SERVICE_ACCOUNT_FILE` or `GOOGLE_SERVICE_ACCOUNT_JSON` and `GOOGLE_DRIVE_FOLDER_ID` are configured
+- the top-level `Generate Whole Report` action uses the current dashboard state and includes only consensus-passed findings that are not marked `Won't Report` or `Partial`
 
 </details>
 

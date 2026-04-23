@@ -288,6 +288,44 @@ select {
     margin-bottom: 10px;
 }
 
+.report-settings-section {
+    background: white;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.report-settings-section h3 {
+    margin-bottom: 12px;
+}
+
+.report-settings-grid {
+    display: grid;
+    grid-template-columns: minmax(260px, 2fr) minmax(140px, 0.8fr) minmax(180px, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+}
+
+.report-settings-grid input,
+.report-settings-grid select {
+    width: 100%;
+}
+
+.report-settings-meta {
+    margin-top: 10px;
+    font-size: 13px;
+    color: #666;
+}
+
+.report-settings-actions {
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
 .researchers-section {
     background: white;
     padding: 15px;
@@ -428,6 +466,58 @@ select {
 
 body.dark-mode .pr-tabs-container {
     background: #1f2937;
+}
+
+body.dark-mode .repo-info,
+body.dark-mode .report-settings-section,
+body.dark-mode .researchers-section,
+body.dark-mode .progress-charts,
+body.dark-mode .stat-card,
+body.dark-mode .section {
+    background: #1f2937;
+    color: #e5e7eb;
+}
+
+body.dark-mode .report-settings-meta,
+body.dark-mode .last-updated,
+body.dark-mode .subtitle {
+    color: #9ca3af;
+}
+
+body.dark-mode .draft-status-badge.idle {
+    background: #374151;
+    color: #d1d5db;
+}
+
+body.dark-mode .draft-status-badge.drafting {
+    background: #78350f;
+    color: #fde68a;
+}
+
+body.dark-mode .draft-status-badge.ready {
+    background: #14532d;
+    color: #bbf7d0;
+}
+
+body.dark-mode .draft-status-badge.failed {
+    background: #7f1d1d;
+    color: #fecaca;
+}
+
+body.dark-mode .draft-open-link {
+    color: #93c5fd;
+}
+
+body.dark-mode .draft-progress-text {
+    color: #d1d5db;
+}
+
+body.dark-mode .draft-progress-track {
+    background: #374151;
+}
+
+body.dark-mode .draft-progress-fill {
+    background: linear-gradient(90deg, #60a5fa, #34d399);
 }
 
 body.dark-mode .pr-tabs::-webkit-scrollbar-track {
@@ -1473,6 +1563,108 @@ body.dark-mode .refresh-hint {
     display: flex;
     align-items: flex-start;
     gap: 10px;
+    flex-wrap: wrap;
+}
+
+.comment-header > a {
+    flex: 1;
+    min-width: 220px;
+}
+
+.draft-action-block {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    max-width: 100%;
+}
+
+.draft-action-block.compact {
+    margin-left: auto;
+}
+
+.btn-draft-report {
+    white-space: nowrap;
+}
+
+.draft-status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 24px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.draft-status-badge.idle {
+    background: #e9ecef;
+    color: #495057;
+}
+
+.draft-status-badge.drafting {
+    background: #fff3cd;
+    color: #8a6d3b;
+}
+
+.draft-status-badge.ready {
+    background: #d4edda;
+    color: #155724;
+}
+
+.draft-status-badge.failed {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.draft-open-link {
+    color: #0056b3;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.draft-open-link:hover {
+    text-decoration: underline;
+}
+
+.draft-progress-text {
+    font-size: 12px;
+    color: #495057;
+    font-weight: 500;
+}
+
+.draft-progress-track {
+    width: 100%;
+    max-width: 320px;
+    height: 8px;
+    background: #e9ecef;
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.draft-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #007bff, #28a745);
+    transition: width 0.3s ease;
+}
+
+.duplicate-group-header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.duplicate-group-header-title {
+    display: inline-flex;
+    align-items: center;
+    min-width: 240px;
 }
 
 .thread-toggle {

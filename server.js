@@ -6,6 +6,25 @@ import { getPRReviewCommentsWithReactions, generatePDF } from "./dataFetcher.js"
 import { Octokit } from "@octokit/rest";
 import dotenv from "dotenv";
 import { normalizeResearchersConfig } from "./researchersConfig.js";
+import {
+    buildConsensusReportPlan,
+    buildDraftFileStem,
+    buildGoogleDocTitle,
+    buildPrompt,
+    buildDraftSourcePayload,
+    formatWholeReportMarkdown,
+    formatReportDraftMarkdown,
+    getDraftOutputDir,
+    loadReportPromptContext,
+    normalizeDraftConfig,
+    resolveRepoPath,
+    writeDraftArtifacts,
+} from "./reportDrafting.js";
+import {
+    createGoogleDocDraft,
+    isGoogleDocsEnabled,
+    runDraftWithProvider,
+} from "./reportDraftProviders.js";
 
 dotenv.config();
 
@@ -44,6 +63,9 @@ const undupeFlags = {};
 // In-memory cache for PR data
 const prDataCache = new Map();
 const CACHE_TTL = 30 * 1000; // 30 seconds
+const REPORT_DRAFT_JOBS_FILE = "report-draft-jobs.json";
+const runningReportDraftJobs = new Map();
+let reportDraftState = null;
 
 function getCacheKey(owner, repo, prNumber, prIndex = null) {
     // Include prIndex to support duplicate PRs with different researcher configs
@@ -192,6 +214,410 @@ async function saveResearchers(owner, repo, prNumber, researchers, prIndex = nul
     return normalizedConfig;
 }
 
+async function getPreparedReviewData(prIndex, { forceRefresh = false } = {}) {
+    const config = await loadConfig();
+    if (!config || !config.repositories || config.repositories.length === 0) {
+        throw new Error("No repository configured");
+    }
+
+    if (prIndex >= config.repositories.length) {
+        throw new Error("Invalid PR index");
+    }
+
+    const repo = config.repositories[prIndex];
+
+    if (!forceRefresh) {
+        const cached = getCachedData(repo.owner, repo.repo, repo.pullRequestNumber, prIndex);
+        if (cached) {
+            return cached;
+        }
+    }
+
+    const researchersConfig = await loadResearchers(
+        repo.owner,
+        repo.repo,
+        repo.pullRequestNumber,
+        prIndex,
+    );
+    const assignments = await loadAssignments();
+    const data = await getPRReviewCommentsWithReactions(
+        repo.owner,
+        repo.repo,
+        repo.pullRequestNumber,
+        undupeFlags,
+    );
+
+    if (researchersConfig.researchers.length > 0) {
+        const allowedHandles = researchersConfig.researchers.map((r) => r.handle);
+        data.rows = data.rows.filter((row) => allowedHandles.includes(row.proposer));
+
+        const allResearchers = new Set(allowedHandles);
+        data.commenters.forEach((commenter) => allResearchers.add(commenter));
+        data.commenters = Array.from(allResearchers).filter((commenter) =>
+            allowedHandles.includes(commenter),
+        );
+
+        allowedHandles.forEach((handle) => {
+            if (!data.reactionStats[handle]) {
+                let reacted = 0;
+                let total = 0;
+                data.rows.forEach((row) => {
+                    if (row.proposer !== handle) {
+                        total += 1;
+                        if (row.reactions && row.reactions[handle]) {
+                            reacted += 1;
+                        }
+                    }
+                });
+
+                const percentage = total === 0 ? 100 : Math.round((reacted / total) * 100);
+                data.reactionStats[handle] = {
+                    text: `${reacted}/${total} (${percentage}%)`,
+                    percentage,
+                };
+            }
+        });
+    }
+
+    data.rows = data.rows.map((row) => {
+        const savedAssignment = assignments[row.Comment.hyperlink];
+        let assignedTo = "";
+
+        if (savedAssignment) {
+            assignedTo = savedAssignment;
+        } else if (!row.isDuplicate) {
+            assignedTo = row.proposer;
+        }
+
+        return {
+            ...row,
+            assignedTo,
+        };
+    });
+
+    const responseData = {
+        ...data,
+        repository: repo,
+        researchersConfig,
+    };
+
+    setCachedData(repo.owner, repo.repo, repo.pullRequestNumber, responseData, prIndex);
+    return responseData;
+}
+
+async function getReportDraftState() {
+    if (reportDraftState) {
+        return reportDraftState;
+    }
+
+    try {
+        const raw = await fs.readFile(dataPath(REPORT_DRAFT_JOBS_FILE), "utf8");
+        reportDraftState = JSON.parse(raw);
+    } catch (error) {
+        reportDraftState = { jobsBySourceKey: {} };
+    }
+
+    if (!reportDraftState.jobsBySourceKey) {
+        reportDraftState.jobsBySourceKey = {};
+    }
+
+    return reportDraftState;
+}
+
+async function persistReportDraftState() {
+    const state = await getReportDraftState();
+    await ensureDataDir();
+    await fs.writeFile(dataPath(REPORT_DRAFT_JOBS_FILE), JSON.stringify(state, null, 2));
+}
+
+function buildReportDraftSourceKey(prIndex, sourceType, sourceId) {
+    return `${prIndex}:${sourceType}:${sourceId}`;
+}
+
+function buildReportDraftJobId(sourceType, sourceId) {
+    const safeSource = String(sourceId).replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 80);
+    return `${sourceType}-${safeSource}-${Date.now()}`;
+}
+
+function sanitizeReportDraftJob(job) {
+    if (!job) {
+        return null;
+    }
+
+    return {
+        id: job.id,
+        prIndex: job.prIndex,
+        sourceType: job.sourceType,
+        sourceId: job.sourceId,
+        sourceKey: job.sourceKey,
+        status: job.status,
+        provider: job.provider,
+        model: job.model,
+        startedAt: job.startedAt,
+        finishedAt: job.finishedAt || null,
+        error: job.error || null,
+        docUrl: job.docUrl || null,
+        markdownPath: job.markdownPath || null,
+        markdownUrl: job.markdownPath ? `/api/report-drafts/${job.id}/markdown` : null,
+        mode: job.mode || null,
+        confidence: job.confidence ?? null,
+        itemCount: job.itemCount ?? null,
+        completedCount: job.completedCount ?? null,
+        skippedCount: job.skippedCount ?? null,
+    };
+}
+
+async function upsertReportDraftJob(job) {
+    const state = await getReportDraftState();
+    state.jobsBySourceKey[job.sourceKey] = job;
+    await persistReportDraftState();
+    return job;
+}
+
+async function findReportDraftJobById(jobId) {
+    const state = await getReportDraftState();
+    return Object.values(state.jobsBySourceKey).find((job) => job.id === jobId) || null;
+}
+
+async function listReportDraftJobs(prIndex) {
+    const state = await getReportDraftState();
+    return Object.values(state.jobsBySourceKey)
+        .filter((job) => job.prIndex === prIndex)
+        .sort(
+            (left, right) =>
+                new Date(right.startedAt).getTime() - new Date(left.startedAt).getTime(),
+        )
+        .map(sanitizeReportDraftJob);
+}
+
+function getProviderModel(repository, provider) {
+    if (typeof repository?.reportModel === "string" && repository.reportModel.trim()) {
+        return repository.reportModel.trim();
+    }
+
+    return provider === "claude" ? "sonnet" : "gpt-5.4";
+}
+
+async function generateDraftResultForSource({
+    reviewData,
+    repository,
+    draftConfig,
+    repoPath,
+    sourceType,
+    sourceId,
+    provider,
+    model,
+    startedAt,
+}) {
+    const reportContext = await loadReportPromptContext();
+    const source = buildDraftSourcePayload(reviewData, sourceType, sourceId);
+    const prompt = buildPrompt({
+        repository: {
+            owner: repository.owner,
+            repo: repository.repo,
+            pullRequestNumber: repository.pullRequestNumber,
+            auditRef: draftConfig.auditRef,
+        },
+        source,
+        reportContext,
+    });
+    const providerResult = await runDraftWithProvider({
+        provider,
+        repoPath,
+        prompt,
+        model,
+    });
+    const markdown = formatReportDraftMarkdown(providerResult.structured);
+    const fileStem = buildDraftFileStem({
+        repository,
+        source,
+        startedAt,
+    });
+    const artifacts = await writeDraftArtifacts({
+        outputDir: getDraftOutputDir(DATA_DIR),
+        fileStem,
+        markdown,
+        result: providerResult.structured,
+        prompt,
+    });
+    return {
+        source,
+        prompt,
+        providerResult,
+        markdown,
+        artifacts,
+    };
+}
+
+async function startReportDraftJob(prIndex, sourceType, sourceId, options = {}) {
+    const sourceKey = buildReportDraftSourceKey(prIndex, sourceType, sourceId);
+    const activeRun = runningReportDraftJobs.get(sourceKey);
+    if (activeRun) {
+        return activeRun.job;
+    }
+
+    const reviewData = await getPreparedReviewData(prIndex, { forceRefresh: true });
+    const repository = reviewData.repository;
+    const draftConfig = normalizeDraftConfig(repository);
+    const repoPath = await resolveRepoPath(draftConfig.repoPath);
+    const provider = draftConfig.provider;
+    const model = getProviderModel(repository, provider);
+    const startedAt = new Date().toISOString();
+    const selectedSources = Array.isArray(options.selectedSources)
+        ? options.selectedSources.filter((entry) => entry?.sourceType && entry?.sourceId)
+        : [];
+    const job = {
+        id: buildReportDraftJobId(sourceType, sourceId),
+        prIndex,
+        sourceType,
+        sourceId,
+        sourceKey,
+        status: "drafting",
+        provider,
+        model,
+        startedAt,
+        finishedAt: null,
+        error: null,
+        markdownPath: null,
+        metadataPath: null,
+        docUrl: null,
+        mode: null,
+        confidence: null,
+        itemCount: sourceType === "full-report" ? selectedSources.length : 1,
+        completedCount: 0,
+        skippedCount: 0,
+    };
+
+    await upsertReportDraftJob(job);
+
+    const promise = (async () => {
+        try {
+            if (sourceType === "full-report") {
+                if (!selectedSources.length) {
+                    throw new Error("No consensus-passed findings are ready for the full report");
+                }
+
+                const findings = [];
+                const skippedItems = [];
+                for (const selectedSource of selectedSources) {
+                    const draftResult = await generateDraftResultForSource({
+                        reviewData,
+                        repository,
+                        draftConfig,
+                        repoPath,
+                        sourceType: selectedSource.sourceType,
+                        sourceId: selectedSource.sourceId,
+                        provider,
+                        model,
+                        startedAt,
+                    });
+
+                    if (draftResult.providerResult.structured.mode === "split_needed") {
+                        skippedItems.push({
+                            label: selectedSource.issueNumber || selectedSource.sourceId,
+                            reason:
+                                draftResult.providerResult.structured.splitReason ||
+                                "The selected finding needs manual split review.",
+                        });
+                    } else {
+                        findings.push(draftResult.providerResult.structured);
+                    }
+
+                    job.completedCount += 1;
+                    job.skippedCount = skippedItems.length;
+                    await upsertReportDraftJob(job);
+                }
+
+                if (!findings.length) {
+                    throw new Error("No findings were produced for the full report");
+                }
+
+                const markdown = formatWholeReportMarkdown({
+                    repository,
+                    findings,
+                    skippedItems,
+                });
+                const fileStem = buildDraftFileStem({
+                    repository,
+                    source: { sourceType: "full-report", sourceId },
+                    startedAt,
+                });
+                const artifacts = await writeDraftArtifacts({
+                    outputDir: getDraftOutputDir(DATA_DIR),
+                    fileStem,
+                    markdown,
+                    result: {
+                        findings,
+                        skippedItems,
+                    },
+                    prompt: JSON.stringify(selectedSources, null, 2),
+                });
+                const googleDoc = await createGoogleDocDraft({
+                    title: buildGoogleDocTitle({
+                        repository,
+                        source: { sourceType: "full-report", sourceId },
+                    }),
+                    markdown,
+                });
+
+                Object.assign(job, {
+                    status: "ready",
+                    finishedAt: new Date().toISOString(),
+                    markdownPath: artifacts.markdownPath,
+                    metadataPath: artifacts.metadataPath,
+                    docUrl: googleDoc?.url || null,
+                    mode: "full-report",
+                    confidence: null,
+                });
+            } else {
+                const draftResult = await generateDraftResultForSource({
+                    reviewData,
+                    repository,
+                    draftConfig,
+                    repoPath,
+                    sourceType,
+                    sourceId,
+                    provider,
+                    model,
+                    startedAt,
+                });
+                const googleDoc = await createGoogleDocDraft({
+                    title: buildGoogleDocTitle({ repository, source: draftResult.source }),
+                    markdown: draftResult.markdown,
+                });
+
+                Object.assign(job, {
+                    status: "ready",
+                    finishedAt: new Date().toISOString(),
+                    markdownPath: draftResult.artifacts.markdownPath,
+                    metadataPath: draftResult.artifacts.metadataPath,
+                    docUrl: googleDoc?.url || null,
+                    mode: draftResult.providerResult.structured.mode,
+                    confidence: draftResult.providerResult.structured.confidence,
+                    completedCount: 1,
+                });
+            }
+            await upsertReportDraftJob(job);
+        } catch (error) {
+            Object.assign(job, {
+                status: "failed",
+                finishedAt: new Date().toISOString(),
+                error: error.message,
+            });
+            await upsertReportDraftJob(job);
+        } finally {
+            runningReportDraftJobs.delete(sourceKey);
+        }
+    })();
+
+    runningReportDraftJobs.set(sourceKey, { job, promise });
+    promise.catch(() => {
+        // failure is persisted in the job state above
+    });
+
+    return job;
+}
+
 // API: Get authenticated user (token owner)
 app.get("/api/me", async (req, res) => {
     try {
@@ -226,109 +652,9 @@ app.get("/api/rate-limit", async (req, res) => {
 // API: Get PR data
 app.get("/api/data", async (req, res) => {
     try {
-        const config = await loadConfig();
-        if (!config || !config.repositories || config.repositories.length === 0) {
-            return res.status(400).json({ error: "No repository configured" });
-        }
-
-        // Get active PR index from query param or use first PR
         const prIndex = parseInt(req.query.prIndex) || 0;
-        if (prIndex >= config.repositories.length) {
-            return res.status(400).json({ error: "Invalid PR index" });
-        }
-
-        const repo = config.repositories[prIndex];
         const forceRefresh = req.query.force === "true";
-
-        // Check cache first (unless force refresh)
-        if (!forceRefresh) {
-            const cached = getCachedData(repo.owner, repo.repo, repo.pullRequestNumber, prIndex);
-            if (cached) {
-                return res.json(cached);
-            }
-        }
-
-        const researchersConfig = await loadResearchers(
-            repo.owner,
-            repo.repo,
-            repo.pullRequestNumber,
-            prIndex, // Pass prIndex for duplicate PR support
-        );
-        const assignments = await loadAssignments();
-        const data = await getPRReviewCommentsWithReactions(
-            repo.owner,
-            repo.repo,
-            repo.pullRequestNumber,
-            undupeFlags, // Pass in-memory undupe flags
-        );
-
-        // Filter by researchers if configured
-        if (researchersConfig.researchers.length > 0) {
-            const allowedHandles = researchersConfig.researchers.map((r) => r.handle);
-            data.rows = data.rows.filter((row) => allowedHandles.includes(row.proposer));
-
-            // Ensure all configured researchers appear in commenters list (even if they haven't proposed)
-            const allResearchers = new Set(allowedHandles);
-            data.commenters.forEach((c) => allResearchers.add(c));
-            data.commenters = Array.from(allResearchers).filter((c) =>
-                allowedHandles.includes(c),
-            );
-
-            // Initialize reaction stats for researchers who haven't proposed
-            allowedHandles.forEach((handle) => {
-                if (!data.reactionStats[handle]) {
-                    // Calculate their reactions across all comments
-                    let reacted = 0;
-                    let total = 0;
-                    data.rows.forEach((row) => {
-                        if (row.proposer !== handle) {
-                            total++;
-                            if (row.reactions && row.reactions[handle]) {
-                                reacted++;
-                            }
-                        }
-                    });
-                    const percentage =
-                        total === 0 ? 100 : Math.round((reacted / total) * 100);
-                    data.reactionStats[handle] = {
-                        text: `${reacted}/${total} (${percentage}%)`,
-                        percentage: percentage,
-                    };
-                }
-            });
-        }
-
-        // Add assignments to rows
-        // For duplicates: only use saved assignment if it exists, otherwise leave empty
-        // For regular issues: use saved assignment or default to proposer
-        data.rows = data.rows.map((row) => {
-            const savedAssignment = assignments[row.Comment.hyperlink];
-            let assignedTo = "";
-
-            if (savedAssignment) {
-                // Use saved assignment if it exists
-                assignedTo = savedAssignment;
-            } else if (!row.isDuplicate) {
-                // For non-duplicates, default to proposer
-                assignedTo = row.proposer;
-            }
-            // For duplicates without saved assignment, leave empty
-
-            return {
-                ...row,
-                assignedTo,
-            };
-        });
-
-        const responseData = {
-            ...data,
-            repository: repo,
-            researchersConfig,
-        };
-
-        // Cache the data (with prIndex for duplicate PR support)
-        setCachedData(repo.owner, repo.repo, repo.pullRequestNumber, responseData, prIndex);
-
+        const responseData = await getPreparedReviewData(prIndex, { forceRefresh });
         res.json(responseData);
     } catch (error) {
         console.error("Error fetching data:", error);
@@ -341,6 +667,82 @@ app.get("/api/data", async (req, res) => {
             });
         }
 
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get("/api/report-drafts", async (req, res) => {
+    try {
+        const prIndex = parseInt(req.query.prIndex) || 0;
+        res.json({
+            jobs: await listReportDraftJobs(prIndex),
+            googleDocsEnabled: isGoogleDocsEnabled(),
+        });
+    } catch (error) {
+        console.error("Error listing report drafts:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post("/api/report-drafts", async (req, res) => {
+    try {
+        const prIndex = parseInt(req.body?.prIndex, 10) || 0;
+        const sourceType = req.body?.sourceType;
+        const sourceId = req.body?.sourceId;
+
+        if (!sourceType || !sourceId) {
+            return res.status(400).json({ error: "Missing source type or source ID" });
+        }
+
+        let selectedSources = [];
+        if (sourceType === "full-report") {
+            const reviewData = await getPreparedReviewData(prIndex, { forceRefresh: true });
+            selectedSources = buildConsensusReportPlan(reviewData, req.body?.reportStatuses || {});
+        }
+
+        const job = await startReportDraftJob(prIndex, sourceType, sourceId, {
+            selectedSources,
+        });
+        res.json({
+            success: true,
+            job: sanitizeReportDraftJob(job),
+            googleDocsEnabled: isGoogleDocsEnabled(),
+        });
+    } catch (error) {
+        console.error("Error starting report draft:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get("/api/report-drafts/:jobId", async (req, res) => {
+    try {
+        const job = await findReportDraftJobById(req.params.jobId);
+        if (!job) {
+            return res.status(404).json({ error: "Draft job not found" });
+        }
+
+        res.json({
+            job: sanitizeReportDraftJob(job),
+            googleDocsEnabled: isGoogleDocsEnabled(),
+        });
+    } catch (error) {
+        console.error("Error getting report draft job:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get("/api/report-drafts/:jobId/markdown", async (req, res) => {
+    try {
+        const job = await findReportDraftJobById(req.params.jobId);
+        if (!job || !job.markdownPath) {
+            return res.status(404).json({ error: "Draft markdown not found" });
+        }
+
+        const markdown = await fs.readFile(job.markdownPath, "utf8");
+        res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+        res.send(markdown);
+    } catch (error) {
+        console.error("Error serving report draft markdown:", error);
         res.status(500).json({ error: error.message });
     }
 });

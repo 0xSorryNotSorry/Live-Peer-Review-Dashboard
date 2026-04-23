@@ -4,7 +4,10 @@
         {
             "owner": "OWNER_NAME_1",
             "repo": "REPO_NAME_1",
-            "pullRequestNumber": 1
+            "pullRequestNumber": 1,
+            "repoPath": "/absolute/path/to/local/repo",
+            "reportProvider": "codex",
+            "auditRef": "main"
         },
         {
             "owner": "OWNER_NAME_2",

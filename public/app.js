@@ -5,6 +5,7 @@ let extraColumns = [];
 let extraColumnData = {};
 let latestRows = [];
 let latestCommenters = [];
+let latestDuplicateGroups = [];
 let isNightMode = false;
 let currentRepoKey = null;
 let allPRs = [];
@@ -16,6 +17,9 @@ let authenticatedUser = null; // GitHub token owner
 let currentNotificationFilter = 'all';
 let notificationSyncRequestId = 0;
 let isSavingResearchers = false;
+let reportDraftJobsBySourceKey = {};
+let googleDocsEnabled = false;
+let reportDraftPollTimer = null;
 
 // Fetch authenticated user (token owner)
 async function fetchAuthenticatedUser() {
@@ -173,6 +177,336 @@ function restoreViewport(snapshot) {
     });
 }
 
+function getActiveRepository() {
+    return allPRs[activePRIndex] || null;
+}
+
+function getReportDraftSourceKey(sourceType, sourceId, prIndex = activePRIndex) {
+    return `${prIndex}:${sourceType}:${sourceId}`;
+}
+
+function buildDraftActionHtml(sourceType, sourceId, options = {}) {
+    const sourceKey = getReportDraftSourceKey(sourceType, sourceId);
+    const compactClass = options.compact ? ' compact' : '';
+    const buttonClass = options.compact ? ' btn-small' : '';
+    const label = sourceType === 'full-report' ? 'Generate Whole Report' : 'Draft Report';
+    return `
+        <div class="draft-action-block${compactClass}" data-draft-source-key="${escapeAttribute(sourceKey)}">
+            <button
+                class="btn btn-secondary btn-draft-report${buttonClass}"
+                data-source-type="${escapeAttribute(sourceType)}"
+                data-source-id="${escapeAttribute(sourceId)}"
+            >
+                ${label}
+            </button>
+            <span class="draft-status-badge idle" data-draft-status-for="${escapeAttribute(sourceKey)}">Idle</span>
+            <span class="draft-progress-text" data-draft-progress-text-for="${escapeAttribute(sourceKey)}" style="display: none;"></span>
+            <a
+                class="draft-open-link"
+                data-draft-link-for="${escapeAttribute(sourceKey)}"
+                href="#"
+                target="_blank"
+                rel="noopener noreferrer"
+                style="display: none;"
+            >
+                Open Draft
+            </a>
+            <div class="draft-progress-track" data-draft-progress-track-for="${escapeAttribute(sourceKey)}" style="display: none;">
+                <div class="draft-progress-fill" data-draft-progress-fill-for="${escapeAttribute(sourceKey)}"></div>
+            </div>
+        </div>
+    `;
+}
+
+function getDraftActionLabel(sourceType, state = 'default') {
+    const isFullReport = sourceType === 'full-report';
+    if (state === 'drafting') {
+        return isFullReport ? 'Generating...' : 'Drafting...';
+    }
+    if (state === 'ready') {
+        return isFullReport ? 'Re-generate Report' : 'Re-draft Report';
+    }
+    if (state === 'failed') {
+        return isFullReport ? 'Retry Report' : 'Retry Report';
+    }
+    return isFullReport ? 'Generate Whole Report' : 'Draft Report';
+}
+
+function renderReportSettingsSection() {
+    const activeRepo = getActiveRepository();
+    const repoPathInput = document.getElementById('reportRepoPath');
+    const providerSelect = document.getElementById('reportProvider');
+    const auditRefInput = document.getElementById('reportAuditRef');
+    const status = document.getElementById('reportSettingsStatus');
+    const fullReportAction = document.getElementById('fullReportDraftAction');
+
+    if (!repoPathInput || !providerSelect || !auditRefInput || !status || !fullReportAction) {
+        return;
+    }
+
+    repoPathInput.value = activeRepo?.repoPath || '';
+    providerSelect.value = activeRepo?.reportProvider || 'codex';
+    auditRefInput.value = activeRepo?.auditRef || '';
+    status.textContent = googleDocsEnabled
+        ? 'Google Docs output is enabled on the server. Every ready draft also saves a local markdown copy.'
+        : 'Draft output is local markdown unless Google Docs is configured on the server.';
+
+    fullReportAction.innerHTML = buildDraftActionHtml('full-report', 'consensus', { compact: false });
+    updateReportDraftActionElements();
+}
+
+async function refreshReportDraftJobs() {
+    if (!allPRs.length) {
+        reportDraftJobsBySourceKey = {};
+        updateReportDraftActionElements();
+        stopReportDraftPolling();
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/report-drafts?prIndex=${activePRIndex}`);
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to load draft jobs');
+        }
+
+        googleDocsEnabled = !!data.googleDocsEnabled;
+        reportDraftJobsBySourceKey = {};
+        (data.jobs || []).forEach((job) => {
+            reportDraftJobsBySourceKey[job.sourceKey] = job;
+        });
+        renderReportSettingsSection();
+        updateReportDraftActionElements();
+        syncReportDraftPolling();
+    } catch (error) {
+        console.error('Failed to refresh report draft jobs:', error);
+    }
+}
+
+function updateReportDraftActionElements() {
+    document.querySelectorAll('[data-draft-status-for]').forEach((statusEl) => {
+        const sourceKey = statusEl.dataset.draftStatusFor;
+        const linkEls = document.querySelectorAll(`[data-draft-link-for="${CSS.escape(sourceKey)}"]`);
+        const progressTextEls = document.querySelectorAll(
+            `[data-draft-progress-text-for="${CSS.escape(sourceKey)}"]`,
+        );
+        const progressTrackEls = document.querySelectorAll(
+            `[data-draft-progress-track-for="${CSS.escape(sourceKey)}"]`,
+        );
+        const progressFillEls = document.querySelectorAll(
+            `[data-draft-progress-fill-for="${CSS.escape(sourceKey)}"]`,
+        );
+        const buttonEls = document.querySelectorAll(
+            `[data-draft-source-key="${CSS.escape(sourceKey)}"] .btn-draft-report`,
+        );
+        const sourceType = buttonEls[0]?.dataset.sourceType || 'single';
+        const job = reportDraftJobsBySourceKey[sourceKey];
+        const isMultiItemJob = typeof job?.itemCount === 'number' && job.itemCount > 1;
+        const processedCount = Number.isFinite(job?.completedCount) ? job.completedCount : 0;
+        const totalCount = Number.isFinite(job?.itemCount) ? job.itemCount : 0;
+        const skippedCount = Number.isFinite(job?.skippedCount) ? job.skippedCount : 0;
+        const progressPercent = totalCount > 0
+            ? Math.max(0, Math.min(100, Math.round((processedCount / totalCount) * 100)))
+            : 0;
+
+        const hideProgress = () => {
+            progressTextEls.forEach((el) => {
+                el.style.display = 'none';
+                el.textContent = '';
+            });
+            progressTrackEls.forEach((el) => {
+                el.style.display = 'none';
+            });
+            progressFillEls.forEach((el) => {
+                el.style.width = '0%';
+            });
+        };
+
+        const showProgress = (text) => {
+            progressTextEls.forEach((el) => {
+                el.style.display = 'inline-flex';
+                el.textContent = text;
+            });
+            progressTrackEls.forEach((el) => {
+                el.style.display = 'block';
+            });
+            progressFillEls.forEach((el) => {
+                el.style.width = `${progressPercent}%`;
+            });
+        };
+
+        statusEl.className = 'draft-status-badge';
+        if (!job) {
+            statusEl.classList.add('idle');
+            statusEl.textContent = 'Idle';
+            buttonEls.forEach((buttonEl) => {
+                buttonEl.disabled = false;
+                buttonEl.textContent = getDraftActionLabel(sourceType);
+            });
+            linkEls.forEach((linkEl) => {
+                linkEl.style.display = 'none';
+                linkEl.href = '#';
+            });
+            hideProgress();
+            return;
+        }
+
+        if (job.status === 'drafting') {
+            statusEl.classList.add('drafting');
+            statusEl.textContent = 'Drafting';
+            buttonEls.forEach((buttonEl) => {
+                buttonEl.disabled = true;
+                buttonEl.textContent = getDraftActionLabel(sourceType, 'drafting');
+            });
+            linkEls.forEach((linkEl) => {
+                linkEl.style.display = 'none';
+                linkEl.href = '#';
+            });
+            if (isMultiItemJob) {
+                showProgress(
+                    `${processedCount}/${totalCount} processed · ${progressPercent}%${skippedCount ? ` · ${skippedCount} skipped` : ''}`,
+                );
+            } else {
+                hideProgress();
+            }
+            return;
+        }
+
+        if (job.status === 'ready') {
+            statusEl.classList.add('ready');
+            statusEl.textContent = job.docUrl
+                ? (sourceType === 'full-report' ? 'Report Doc Ready' : 'Doc Ready')
+                : (sourceType === 'full-report' ? 'Report Ready' : 'Ready');
+            buttonEls.forEach((buttonEl) => {
+                buttonEl.disabled = false;
+                buttonEl.textContent = getDraftActionLabel(sourceType, 'ready');
+            });
+            linkEls.forEach((linkEl) => {
+                linkEl.style.display = 'inline-flex';
+                linkEl.href = job.docUrl || job.markdownUrl;
+                linkEl.textContent = job.docUrl ? 'Open Doc' : 'Open Draft';
+            });
+            if (isMultiItemJob) {
+                showProgress(
+                    `${processedCount}/${totalCount} processed · 100%${skippedCount ? ` · ${skippedCount} skipped` : ''}`,
+                );
+            } else {
+                hideProgress();
+            }
+            return;
+        }
+
+        statusEl.classList.add('failed');
+        statusEl.textContent = 'Failed';
+        statusEl.title = job.error || 'Draft failed';
+        buttonEls.forEach((buttonEl) => {
+            buttonEl.disabled = false;
+            buttonEl.textContent = getDraftActionLabel(sourceType, 'failed');
+        });
+        linkEls.forEach((linkEl) => {
+            linkEl.style.display = 'none';
+            linkEl.href = '#';
+        });
+        if (isMultiItemJob) {
+            showProgress(
+                `${processedCount}/${totalCount} processed · ${progressPercent}%${skippedCount ? ` · ${skippedCount} skipped` : ''}`,
+            );
+        } else {
+            hideProgress();
+        }
+    });
+}
+
+function syncReportDraftPolling() {
+    const shouldPoll = Object.values(reportDraftJobsBySourceKey).some(
+        (job) => job.status === 'drafting',
+    );
+
+    if (shouldPoll && !reportDraftPollTimer) {
+        reportDraftPollTimer = setInterval(() => {
+            refreshReportDraftJobs();
+        }, 5000);
+    }
+
+    if (!shouldPoll) {
+        stopReportDraftPolling();
+    }
+}
+
+function stopReportDraftPolling() {
+    if (reportDraftPollTimer) {
+        clearInterval(reportDraftPollTimer);
+        reportDraftPollTimer = null;
+    }
+}
+
+async function startReportDraft(sourceType, sourceId) {
+    try {
+        const body = {
+            prIndex: activePRIndex,
+            sourceType,
+            sourceId,
+        };
+
+        if (sourceType === 'full-report') {
+            body.reportStatuses = loadReportStatuses();
+        }
+
+        const response = await fetch('/api/report-drafts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to start draft job');
+        }
+
+        googleDocsEnabled = !!data.googleDocsEnabled;
+        reportDraftJobsBySourceKey[data.job.sourceKey] = data.job;
+        renderReportSettingsSection();
+        updateReportDraftActionElements();
+        syncReportDraftPolling();
+    } catch (error) {
+        alert(`Error starting draft: ${error.message}`);
+    }
+}
+
+async function saveReportSettings() {
+    const activeRepo = getActiveRepository();
+    if (!activeRepo) {
+        alert('Please add a PR first');
+        return;
+    }
+
+    const repoPath = document.getElementById('reportRepoPath').value.trim();
+    const provider = document.getElementById('reportProvider').value;
+    const auditRef = document.getElementById('reportAuditRef').value.trim();
+    const status = document.getElementById('reportSettingsStatus');
+
+    activeRepo.repoPath = repoPath;
+    activeRepo.reportProvider = provider || 'codex';
+
+    if (auditRef) {
+        activeRepo.auditRef = auditRef;
+    } else {
+        delete activeRepo.auditRef;
+    }
+
+    try {
+        await saveAllPRs();
+        renderReportSettingsSection();
+        if (status) {
+            status.textContent = 'Draft settings saved.';
+        }
+    } catch (error) {
+        if (status) {
+            status.textContent = `Draft settings failed: ${error.message}`;
+        }
+        alert(`Error saving draft settings: ${error.message}`);
+    }
+}
+
 function getPrKey(repository, index) {
     if (!repository) return `unknown@${index}`;
     return `${repository.owner}/${repository.repo}#${repository.pullRequestNumber}@${index}`;
@@ -241,6 +575,27 @@ function setNotificationFirstSeen(firstSeenMap, id, fallbackValue = null) {
         firstSeenMap.set(id, fallbackValue || new Date().toISOString());
     }
     return firstSeenMap.get(id);
+}
+
+function getNotificationTimestamp({
+    id,
+    sourceCreatedAt = null,
+    firstSeenMap,
+    previousById,
+}) {
+    if (sourceCreatedAt) {
+        return sourceCreatedAt;
+    }
+
+    const previous = previousById?.get(id);
+    if (previous?.sortTimestamp) {
+        return previous.sortTimestamp;
+    }
+    if (previous?.createdAt) {
+        return previous.createdAt;
+    }
+
+    return setNotificationFirstSeen(firstSeenMap, id);
 }
 
 function resetNotificationStore() {
@@ -423,7 +778,7 @@ function saveReportStatus(commentUrl, status, partialIssue = '') {
     }
 }
 
-function buildNotificationsForData(data, prIndex, firstSeenMap) {
+function buildNotificationsForData(data, prIndex, firstSeenMap, previousById) {
     if (!data || data.error || !data.repository) {
         return [];
     }
@@ -433,9 +788,16 @@ function buildNotificationsForData(data, prIndex, firstSeenMap) {
     const built = [];
 
     (data.rows || []).forEach((row) => {
+        const rootId = `${prKey}::${row.commentUrl}::root`;
         const rootSourceCreatedAt = row.createdAt || null;
+        const rootTimestamp = getNotificationTimestamp({
+            id: rootId,
+            sourceCreatedAt: rootSourceCreatedAt,
+            firstSeenMap,
+            previousById,
+        });
         built.push({
-            id: `${prKey}::${row.commentUrl}::root`,
+            id: rootId,
             prKey,
             prLabel,
             prIndex,
@@ -447,23 +809,16 @@ function buildNotificationsForData(data, prIndex, firstSeenMap) {
             author: row.proposer,
             body: row.Comment.fullText || row.Comment.text,
             sourceCreatedAt: rootSourceCreatedAt,
-            createdAt: rootSourceCreatedAt || setNotificationFirstSeen(firstSeenMap, `${prKey}::${row.commentUrl}::root`),
-            sortTimestamp: rootSourceCreatedAt || setNotificationFirstSeen(firstSeenMap, `${prKey}::${row.commentUrl}::root`),
+            createdAt: rootTimestamp,
+            sortTimestamp: rootTimestamp,
         });
 
         if (row.isResolved) {
             const resolutionId = `${prKey}::${row.commentUrl}::resolved`;
-            let resolver = null;
+            let resolver = row.resolvedBy || null;
             let createdAt = null;
-            let latestReplyCreatedAt = null;
 
             if (row.threadReplies && row.threadReplies.length > 0) {
-                latestReplyCreatedAt = row.threadReplies
-                    .map((reply) => reply.createdAt)
-                    .filter(Boolean)
-                    .sort()
-                    .at(-1) || null;
-
                 const resolutionComment = row.threadReplies.find((reply) => {
                     const body = reply.body || '';
                     return (
@@ -472,10 +827,17 @@ function buildNotificationsForData(data, prIndex, firstSeenMap) {
                     );
                 });
                 if (resolutionComment) {
-                    resolver = resolutionComment.author;
+                    resolver = resolver || resolutionComment.author;
                     createdAt = resolutionComment.createdAt || null;
                 }
             }
+
+            const resolutionTimestamp = getNotificationTimestamp({
+                id: resolutionId,
+                sourceCreatedAt: createdAt,
+                firstSeenMap,
+                previousById,
+            });
 
             built.push({
                 id: resolutionId,
@@ -488,23 +850,22 @@ function buildNotificationsForData(data, prIndex, firstSeenMap) {
                 issueNumber: row.issueNumber,
                 issueTitle: row.Comment.text,
                 resolver,
-                sourceCreatedAt: createdAt || latestReplyCreatedAt || row.createdAt || null,
-                createdAt:
-                    createdAt ||
-                    latestReplyCreatedAt ||
-                    row.createdAt ||
-                    setNotificationFirstSeen(firstSeenMap, resolutionId),
-                sortTimestamp:
-                    createdAt ||
-                    latestReplyCreatedAt ||
-                    row.createdAt ||
-                    setNotificationFirstSeen(firstSeenMap, resolutionId),
+                sourceCreatedAt: createdAt || null,
+                createdAt: resolutionTimestamp,
+                sortTimestamp: resolutionTimestamp,
             });
         }
 
         (row.threadReplies || []).forEach((reply) => {
+            const replyId = `${prKey}::${row.commentUrl}::reply::${reply.id}`;
+            const replyTimestamp = getNotificationTimestamp({
+                id: replyId,
+                sourceCreatedAt: reply.createdAt || null,
+                firstSeenMap,
+                previousById,
+            });
             built.push({
-                id: `${prKey}::${row.commentUrl}::reply::${reply.id}`,
+                id: replyId,
                 prKey,
                 prLabel,
                 prIndex,
@@ -517,8 +878,8 @@ function buildNotificationsForData(data, prIndex, firstSeenMap) {
                 body: reply.body,
                 reactions: reply.reactions || [],
                 sourceCreatedAt: reply.createdAt || null,
-                createdAt: reply.createdAt || setNotificationFirstSeen(firstSeenMap, `${prKey}::${row.commentUrl}::reply::${reply.id}`),
-                sortTimestamp: reply.createdAt || setNotificationFirstSeen(firstSeenMap, `${prKey}::${row.commentUrl}::reply::${reply.id}`),
+                createdAt: replyTimestamp,
+                sortTimestamp: replyTimestamp,
             });
         });
 
@@ -534,6 +895,12 @@ function buildNotificationsForData(data, prIndex, firstSeenMap) {
                 }
 
                 const reactionId = `${prKey}::${row.commentUrl}::reaction::${user}`;
+                const reactionTimestamp = getNotificationTimestamp({
+                    id: reactionId,
+                    sourceCreatedAt: null,
+                    firstSeenMap,
+                    previousById,
+                });
                 built.push({
                     id: reactionId,
                     prKey,
@@ -547,8 +914,8 @@ function buildNotificationsForData(data, prIndex, firstSeenMap) {
                     author: user,
                     emoji,
                     sourceCreatedAt: null,
-                    createdAt: setNotificationFirstSeen(firstSeenMap, reactionId),
-                    sortTimestamp: setNotificationFirstSeen(firstSeenMap, reactionId),
+                    createdAt: reactionTimestamp,
+                    sortTimestamp: reactionTimestamp,
                 });
             });
         }
@@ -597,7 +964,7 @@ async function syncNotificationInbox(activeData = null, forceRefresh = false) {
     }
 
     notifications = payloads
-        .flatMap(({ index, data }) => buildNotificationsForData(data, index, firstSeenMap))
+        .flatMap(({ index, data }) => buildNotificationsForData(data, index, firstSeenMap, previousById))
         .map((notification) => {
             const previous = previousById.get(notification.id);
             return {
@@ -1272,7 +1639,9 @@ function editTabLabel(index, tabElement) {
         pr.customLabel = newLabel.trim();
         
         // Save to config
-        saveAllPRs();
+        saveAllPRs().catch((error) => {
+            console.error('Error saving PR labels:', error);
+        });
         
         // Re-render tabs
         renderPRTabs();
@@ -1281,20 +1650,18 @@ function editTabLabel(index, tabElement) {
 
 // Save all PRs to server
 async function saveAllPRs() {
-    try {
-        const response = await fetch('/api/prs/update-all', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ repositories: allPRs })
-        });
-        
-        const data = await response.json();
-        if (!data.success) {
-            console.error('Failed to save PR labels');
-        }
-    } catch (error) {
-        console.error('Error saving PR labels:', error);
+    const response = await fetch('/api/prs/update-all', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repositories: allPRs })
+    });
+    
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to save PR configuration');
     }
+
+    return data;
 }
 
 // Switch to a different PR
@@ -1660,6 +2027,26 @@ function setupEventListeners() {
     // Sync PR from URL
     document.getElementById('syncPRUrl').addEventListener('click', syncPRFromUrl);
 
+    const saveReportSettingsBtn = document.getElementById('saveReportSettings');
+    if (saveReportSettingsBtn) {
+        saveReportSettingsBtn.addEventListener('click', saveReportSettings);
+    }
+
+    document.addEventListener('click', (event) => {
+        const draftLink = event.target.closest('.draft-open-link');
+        if (draftLink) {
+            event.stopPropagation();
+            return;
+        }
+
+        const draftButton = event.target.closest('.btn-draft-report');
+        if (draftButton) {
+            event.preventDefault();
+            event.stopPropagation();
+            startReportDraft(draftButton.dataset.sourceType, draftButton.dataset.sourceId);
+        }
+    });
+
     const addColumnBtn = document.getElementById('addColumn');
     if (addColumnBtn) {
         addColumnBtn.addEventListener('click', addExtraColumn);
@@ -1918,6 +2305,7 @@ async function loadData(options = {}) {
         
         // Update API counter after data fetch
         updateAPICounter();
+        await refreshReportDraftJobs();
         
         document.getElementById('loading').style.display = 'none';
         document.getElementById('content').style.display = 'block';
@@ -1937,8 +2325,10 @@ function renderData(data) {
     setRepositoryContext(data.repository);
     latestRows = data.rows || [];
     latestCommenters = data.commenters || [];
+    latestDuplicateGroups = data.duplicateGroups || [];
     
     renderRepoInfo(data.repository);
+    renderReportSettingsSection();
     renderResearchersSection(data.researchersConfig, data.commenters);
     renderProgressCharts(latestRows, data.duplicateGroups, latestCommenters);
     renderStats(data.stats, data.duplicateGroups, latestRows, latestCommenters);
@@ -2228,7 +2618,7 @@ function renderDuplicateGroups(groups) {
     
     document.getElementById('duplicateGroupsSection').style.display = 'block';
     
-    let html = '<table><thead><tr><th>Group #</th><th>Duplicates</th><th>Count</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>Group #</th><th>Duplicates</th><th>Count</th><th>Draft</th></tr></thead><tbody>';
     
     groups.forEach(group => {
         const dupLinks = group.duplicates.map((dup, idx) => {
@@ -2243,12 +2633,14 @@ function renderDuplicateGroups(groups) {
                 <td><strong><a href="#${groupAnchor}" class="group-link">${group.groupNumber}</a></strong></td>
                 <td>${dupLinks}</td>
                 <td>${group.count}</td>
+                <td>${buildDraftActionHtml('group', group.groupNumber, { compact: true })}</td>
             </tr>
         `;
     });
     
     html += '</tbody></table>';
     document.getElementById('duplicateGroups').innerHTML = html;
+    updateReportDraftActionElements();
 }
 
 function renderDuplicateAssignments(assignments, commenters) {
@@ -2330,6 +2722,9 @@ function renderTableRow(row, commenters, isInDuplicateGroup, groupId, allRows) {
     html += `<div class="comment-header">`;
     html += `<button class="thread-toggle" data-thread-id="${threadId}">${isExpanded ? '▼' : '▶'} ${hasReplies ? `${row.replyCount} ${row.replyCount === 1 ? 'reply' : 'replies'}` : 'Details'}</button>`;
     html += `<a href="${row.Comment.hyperlink}" target="_blank">${row.Comment.text}</a>`;
+    if (!row.isDuplicate) {
+        html += buildDraftActionHtml('single', row.commentUrl, { compact: true });
+    }
     html += `</div>`;
     
     // Thread view (collapsible)
@@ -2732,8 +3127,13 @@ function renderCommentsTable(rows, commenters) {
         
         bodyHtml += `<tr class="duplicate-group-header" data-header-for="${groupId}" id="${groupId}">`;
         bodyHtml += `<td colspan="${5 + commenters.length + extraColumns.length}" style="background-color: #e8f4f8; cursor: pointer; font-weight: bold; padding: 10px;">`;
+        bodyHtml += `<div class="duplicate-group-header-inner">`;
+        bodyHtml += `<div class="duplicate-group-header-title">`;
         bodyHtml += `<span class="collapse-icon" data-group-id="${groupId}" style="font-size: 1.2em; font-weight: bold; margin-right: 10px; display: inline-block; min-width: 20px;">${isCollapsed ? '▶' : '▼'}</span>`;
         bodyHtml += `<span style="font-size: 1.1em;">Duplicate Group ${groupNumber} (${groupRows.length} issue${groupRows.length > 1 ? 's' : ''})</span>`;
+        bodyHtml += `</div>`;
+        bodyHtml += buildDraftActionHtml('group', groupNumber, { compact: true });
+        bodyHtml += `</div>`;
         bodyHtml += `</td></tr>`;
         
         // Group rows (collapsible) - these have data-group-id
@@ -2764,7 +3164,10 @@ function renderCommentsTable(rows, commenters) {
     
     // Add click handlers for collapse/expand
     document.querySelectorAll('.duplicate-group-header').forEach(header => {
-        header.addEventListener('click', function() {
+        header.addEventListener('click', function(event) {
+            if (event.target.closest('.draft-action-block')) {
+                return;
+            }
             const groupId = this.dataset.headerFor;
             toggleDuplicateGroup(groupId);
         });
@@ -2820,6 +3223,8 @@ function renderCommentsTable(rows, commenters) {
             }
         });
     });
+
+    updateReportDraftActionElements();
     
     // Report status dropdowns
     document.querySelectorAll('.report-status-dropdown').forEach(select => {
