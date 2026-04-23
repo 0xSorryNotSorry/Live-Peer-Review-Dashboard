@@ -144,10 +144,13 @@ dup of #discussion_r456789
 1. Click "👥 Manage Researchers"
 2. Enter GitHub handle
 3. Click "Add"
+4. Handles are trimmed and deduplicated on save
 
 **Set Lead Security Researcher (LSR):**
 - Click "Set as LSR" next to a researcher
 - LSR gets special permissions (PIC assignments)
+- LSR must be one of the saved researchers for that PR
+- If you remove the current LSR, the LSR field is cleared automatically
 
 **Per-PR researchers:**
 - Each PR can have different researchers
@@ -342,6 +345,7 @@ dup of #discussion_r456789
 - **⚡ Force Refresh**: Bypasses cache (always latest)
 - **Auto-refresh**: 1min / 5min / 10min intervals (default: Manual)
   - ⚠️ **Note:** Auto-refresh consumes GitHub API rate limit faster. Use Manual mode and refresh when needed to conserve API calls.
+  - The dashboard now keeps your current scroll position during refresh
 
 **Floating refresh button:**
 - Drag anywhere on screen
@@ -486,4 +490,3 @@ MIT License - See LICENSE file
 ---
 
 [^1]: Original project: [christianvari/audit-review-manager](https://github.com/christianvari/audit-review-manager) ↩
-

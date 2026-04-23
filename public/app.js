@@ -15,6 +15,7 @@ let currentLSRAssignment = null; // Stores {groupNumber, primaryCommentUrl}
 let authenticatedUser = null; // GitHub token owner
 let currentNotificationFilter = 'all';
 let notificationSyncRequestId = 0;
+let isSavingResearchers = false;
 
 // Fetch authenticated user (token owner)
 async function fetchAuthenticatedUser() {
@@ -121,6 +122,55 @@ function sanitizeUrl(url) {
         return '#';
     }
     return '#';
+}
+
+function cloneResearchersConfig(config) {
+    return {
+        researchers: Array.isArray(config?.researchers)
+            ? config.researchers
+                  .map((researcher) => {
+                      const handle = typeof researcher?.handle === 'string'
+                          ? researcher.handle.trim()
+                          : '';
+                      return handle ? { handle } : null;
+                  })
+                  .filter(Boolean)
+            : [],
+        lsr: typeof config?.lsr === 'string' && config.lsr.trim() ? config.lsr.trim() : null,
+    };
+}
+
+function normalizeLoadDataOptions(options = {}) {
+    if (typeof options === 'boolean') {
+        return { forceRefresh: options, preserveScroll: false };
+    }
+
+    return {
+        forceRefresh: !!options.forceRefresh,
+        preserveScroll: !!options.preserveScroll,
+    };
+}
+
+function captureViewport() {
+    return {
+        x: window.scrollX,
+        y: window.scrollY,
+    };
+}
+
+function restoreViewport(snapshot) {
+    if (!snapshot) {
+        return;
+    }
+
+    const maxX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+    const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+
+    window.scrollTo({
+        left: Math.min(snapshot.x, maxX),
+        top: Math.min(snapshot.y, maxY),
+        behavior: 'auto',
+    });
 }
 
 function getPrKey(repository, index) {
@@ -964,7 +1014,7 @@ function setupFloatingButtons() {
             // If it was a click (not a drag), trigger refresh
             if (!hasMoved) {
                 const forceRefresh = e.shiftKey;
-                loadData(forceRefresh);
+                loadData({ forceRefresh, preserveScroll: true });
                 
                 const iconEl = floatingRefresh.querySelector('.refresh-icon');
                 if (iconEl) {
@@ -1134,7 +1184,7 @@ async function loadAllPRs() {
                 document.getElementById('prNumber').value = activeRepo.pullRequestNumber;
             }
             
-            renderPRTabs();
+            renderPRTabs({ scrollActiveTab: true });
             loadData();
         } else {
             // No PRs configured, show initial config UI
@@ -1147,7 +1197,8 @@ async function loadAllPRs() {
 }
 
 // Render PR tabs
-function renderPRTabs() {
+function renderPRTabs(options = {}) {
+    const { scrollActiveTab = false } = options;
     const prTabsContainer = document.getElementById('prTabsContainer');
     const tabsContainer = document.getElementById('prTabs');
     
@@ -1193,8 +1244,9 @@ function renderPRTabs() {
         });
     });
     
-    // Auto-scroll to active tab
-    scrollToActiveTab();
+    if (scrollActiveTab) {
+        scrollToActiveTab();
+    }
 }
 
 // Scroll active tab into view
@@ -1261,18 +1313,15 @@ async function switchToPR(index) {
         document.getElementById('prRepo').value = activeRepo.repo;
         document.getElementById('prNumber').value = activeRepo.pullRequestNumber;
         
-        // Load researchers for this PR (with prIndex for duplicate support)
         try {
-            const response = await fetch(`/api/researchers?owner=${activeRepo.owner}&repo=${activeRepo.repo}&prNumber=${activeRepo.pullRequestNumber}&prIndex=${activePRIndex}`);
-            const config = await response.json();
-            researchersConfig = config;
+            researchersConfig = await fetchResearchersConfigForActivePR();
         } catch (error) {
             console.error('Error loading researchers:', error);
             researchersConfig = { researchers: [], lsr: null };
         }
     }
     
-    renderPRTabs();
+    renderPRTabs({ scrollActiveTab: true });
     await loadData();
 }
 
@@ -1344,7 +1393,7 @@ async function addNewPRFromUrl() {
         if (choice) {
             // Switch to existing PR
             activePRIndex = existingIndex;
-            renderPRTabs();
+            renderPRTabs({ scrollActiveTab: true });
             document.getElementById('prManagementModal').style.display = 'none';
             loadData();
             document.getElementById('newPrUrl').value = '';
@@ -1371,7 +1420,7 @@ async function addNewPRFromUrl() {
             localStorage.setItem(ACTIVE_PR_KEY, activePRIndex);
             
             renderPRList();
-            renderPRTabs();
+            renderPRTabs({ scrollActiveTab: true });
             
             // Clear input
             document.getElementById('newPrUrl').value = '';
@@ -1420,7 +1469,7 @@ async function addNewPR() {
         if (choice) {
             // Switch to existing PR
             activePRIndex = existingIndex;
-            renderPRTabs();
+            renderPRTabs({ scrollActiveTab: true });
             document.getElementById('prManagementModal').style.display = 'none';
             loadData();
             document.getElementById('newPrOwner').value = '';
@@ -1449,7 +1498,7 @@ async function addNewPR() {
             localStorage.setItem(ACTIVE_PR_KEY, activePRIndex);
             
             renderPRList();
-            renderPRTabs();
+            renderPRTabs({ scrollActiveTab: true });
             
             // Clear inputs
             document.getElementById('newPrOwner').value = '';
@@ -1491,7 +1540,7 @@ async function removePR(index) {
             if (index === activePRIndex) {
                 activePRIndex = 0;
                 if (allPRs.length > 0) {
-                    renderPRTabs();
+                    renderPRTabs({ scrollActiveTab: true });
                     loadData();
                 } else {
                     // No PRs left - keep container visible for "Manage PRs" button
@@ -1503,7 +1552,7 @@ async function removePR(index) {
                 activePRIndex--;
             }
             
-            renderPRTabs();
+            renderPRTabs({ scrollActiveTab: true });
             alert('✅ PR removed successfully!');
         } else {
             alert('❌ ' + (data.error || 'Failed to remove PR'));
@@ -1528,12 +1577,12 @@ function setupEventListeners() {
 
     // Manual refresh
     document.getElementById('manualRefresh').addEventListener('click', () => {
-        loadData();
+        loadData({ preserveScroll: true });
     });
     
     // Force refresh (bypass cache)
     document.getElementById('forceRefresh').addEventListener('click', () => {
-        loadData(true);
+        loadData({ forceRefresh: true, preserveScroll: true });
     });
 
     // Generate PDF
@@ -1813,7 +1862,7 @@ async function syncPR() {
         if (data.success) {
             allPRs = data.repositories;
             activePRIndex = allPRs.length - 1; // Switch to the newly added PR
-            renderPRTabs();
+            renderPRTabs({ scrollActiveTab: true });
             alert('✅ PR added successfully!');
             await loadData();
         } else {
@@ -1830,7 +1879,7 @@ async function syncPR() {
 function startAutoRefresh() {
     stopAutoRefresh();
     refreshTimer = setInterval(() => {
-        loadData();
+        loadData({ preserveScroll: true });
     }, refreshInterval);
 }
 
@@ -1841,7 +1890,10 @@ function stopAutoRefresh() {
     }
 }
 
-async function loadData(forceRefresh = false) {
+async function loadData(options = {}) {
+    const { forceRefresh, preserveScroll } = normalizeLoadDataOptions(options);
+    const viewportSnapshot = preserveScroll ? captureViewport() : null;
+
     try {
         document.getElementById('loading').style.display = 'block';
         document.getElementById('error').style.display = 'none';
@@ -1857,6 +1909,12 @@ async function loadData(forceRefresh = false) {
         
         researchersConfig = data.researchersConfig;
         renderData(data);
+
+        try {
+            await syncNotificationInbox(data, forceRefresh);
+        } catch (error) {
+            console.error('Failed to sync notification inbox:', error);
+        }
         
         // Update API counter after data fetch
         updateAPICounter();
@@ -1864,6 +1922,10 @@ async function loadData(forceRefresh = false) {
         document.getElementById('loading').style.display = 'none';
         document.getElementById('content').style.display = 'block';
         document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+
+        if (viewportSnapshot) {
+            requestAnimationFrame(() => restoreViewport(viewportSnapshot));
+        }
     } catch (error) {
         document.getElementById('loading').style.display = 'none';
         document.getElementById('error').style.display = 'block';
@@ -1888,10 +1950,6 @@ function renderData(data) {
     renderCommentsTable(latestRows, latestCommenters);
     updateColumnControls();
     persistExtraColumnState();
-
-    syncNotificationInbox(data).catch((error) => {
-        console.error('Failed to sync notification inbox:', error);
-    });
 }
 
 function renderRepoInfo(repo) {
@@ -2065,7 +2123,7 @@ function renderResearchersSection(config, commenters) {
         const isLSR = config.lsr === researcher.handle;
         const badge = `
             <span class="researcher-badge ${isLSR ? 'lsr' : ''}">
-                ${researcher.handle}
+                ${escapeHtml(researcher.handle)}
                 ${isLSR ? '⭐ LSR' : ''}
             </span>
         `;
@@ -3069,6 +3127,60 @@ async function submitLSRAssignment() {
 }
 
 // Researchers management
+async function fetchResearchersConfigForActivePR() {
+    if (allPRs.length === 0) {
+        throw new Error('No active PR');
+    }
+
+    const activePR = allPRs[activePRIndex];
+    const response = await fetch(`/api/researchers?owner=${activePR.owner}&repo=${activePR.repo}&prNumber=${activePR.pullRequestNumber}&prIndex=${activePRIndex}`);
+    const config = await response.json();
+
+    if (!response.ok) {
+        throw new Error(config.error || 'Failed to load researchers');
+    }
+
+    return cloneResearchersConfig(config);
+}
+
+async function persistResearchersConfig(nextConfig) {
+    if (allPRs.length === 0) {
+        throw new Error('No active PR');
+    }
+
+    if (isSavingResearchers) {
+        throw new Error('Researchers update already in progress');
+    }
+
+    isSavingResearchers = true;
+
+    try {
+        const activePR = allPRs[activePRIndex];
+        const response = await fetch('/api/researchers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                owner: activePR.owner,
+                repo: activePR.repo,
+                prNumber: activePR.pullRequestNumber,
+                researchers: nextConfig.researchers,
+                lsr: nextConfig.lsr,
+                prIndex: activePRIndex,
+            })
+        });
+
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || 'Failed to save researchers');
+        }
+
+        researchersConfig = cloneResearchersConfig(result.researchersConfig || nextConfig);
+        return researchersConfig;
+    } finally {
+        isSavingResearchers = false;
+    }
+}
+
 async function loadResearchersModal() {
     try {
         if (allPRs.length === 0) {
@@ -3076,10 +3188,7 @@ async function loadResearchersModal() {
             return;
         }
         
-        const activePR = allPRs[activePRIndex];
-        const response = await fetch(`/api/researchers?owner=${activePR.owner}&repo=${activePR.repo}&prNumber=${activePR.pullRequestNumber}&prIndex=${activePRIndex}`);
-        const config = await response.json();
-        researchersConfig = config;
+        researchersConfig = await fetchResearchersConfigForActivePR();
         renderResearchersList();
     } catch (error) {
         alert('Error loading researchers: ' + error.message);
@@ -3097,15 +3206,17 @@ function renderResearchersList() {
     let html = '';
     researchersConfig.researchers.forEach((researcher, index) => {
         const isLSR = researchersConfig.lsr === researcher.handle;
+        const escapedHandle = escapeHtml(researcher.handle);
+        const escapedHandleAttr = escapeAttribute(researcher.handle);
         html += `
             <div class="researcher-item">
                 <div class="researcher-item-info">
-                    <strong>${researcher.handle}</strong>
+                    <strong>${escapedHandle}</strong>
                     ${isLSR ? '<span>⭐ LSR</span>' : ''}
                 </div>
                 <div class="researcher-item-actions">
-                    ${!isLSR ? `<button class="btn btn-small btn-primary" onclick="setLSR('${researcher.handle}')">Set as LSR</button>` : ''}
-                    <button class="btn btn-small btn-danger" onclick="removeResearcher(${index})">Remove</button>
+                    ${!isLSR ? `<button class="btn btn-small btn-primary" data-action="set-lsr" data-handle="${escapedHandleAttr}">Set as LSR</button>` : ''}
+                    <button class="btn btn-small btn-danger" data-action="remove-researcher" data-index="${index}">Remove</button>
                 </div>
             </div>
         `;
@@ -3113,25 +3224,39 @@ function renderResearchersList() {
     
     html += `
         <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center;">
-            <button class="btn btn-danger" onclick="clearAllResearchers()">Clear All (Show All Issues)</button>
+            <button class="btn btn-danger" data-action="clear-researchers">Clear All (Show All Issues)</button>
         </div>
     `;
     
     list.innerHTML = html;
+
+    list.querySelectorAll('[data-action="set-lsr"]').forEach((button) => {
+        button.addEventListener('click', () => {
+            setLSR(button.dataset.handle);
+        });
+    });
+
+    list.querySelectorAll('[data-action="remove-researcher"]').forEach((button) => {
+        button.addEventListener('click', () => {
+            removeResearcher(parseInt(button.dataset.index, 10));
+        });
+    });
+
+    const clearButton = list.querySelector('[data-action="clear-researchers"]');
+    if (clearButton) {
+        clearButton.addEventListener('click', clearAllResearchers);
+    }
 }
 
 async function clearAllResearchers() {
     if (!confirm('This will remove all researchers and show ALL issues. Continue?')) {
         return;
     }
-    
-    researchersConfig.researchers = [];
-    researchersConfig.lsr = null;
-    
+
     try {
-        await saveResearchers();
+        await persistResearchersConfig({ researchers: [], lsr: null });
         renderResearchersList();
-        loadData(); // Refresh main data
+        await loadData({ forceRefresh: true, preserveScroll: true });
     } catch (error) {
         alert('Error clearing researchers: ' + error.message);
     }
@@ -3146,18 +3271,18 @@ async function addResearcher() {
         return;
     }
     
-    if (researchersConfig.researchers.some(r => r.handle === handle)) {
+    if (researchersConfig.researchers.some(r => r.handle.toLowerCase() === handle.toLowerCase())) {
         alert('Researcher already exists');
         return;
     }
-    
-    researchersConfig.researchers.push({ handle });
-    
+
     try {
-        await saveResearchers();
+        const nextConfig = cloneResearchersConfig(researchersConfig);
+        nextConfig.researchers.push({ handle });
+        await persistResearchersConfig(nextConfig);
         input.value = '';
         renderResearchersList();
-        loadData(); // Refresh main data
+        await loadData({ forceRefresh: true, preserveScroll: true });
     } catch (error) {
         alert('Error adding researcher: ' + error.message);
     }
@@ -3168,58 +3293,37 @@ async function removeResearcher(index) {
         return;
     }
     
-    const removed = researchersConfig.researchers[index];
-    researchersConfig.researchers.splice(index, 1);
-    
-    // If removed researcher was LSR, clear LSR
-    if (researchersConfig.lsr === removed.handle) {
-        researchersConfig.lsr = null;
-    }
-    
     try {
-        await saveResearchers();
+        const nextConfig = cloneResearchersConfig(researchersConfig);
+        const removed = nextConfig.researchers[index];
+        nextConfig.researchers.splice(index, 1);
+
+        if (nextConfig.lsr === removed?.handle) {
+            nextConfig.lsr = null;
+        }
+
+        await persistResearchersConfig(nextConfig);
         renderResearchersList();
-        loadData(); // Refresh main data
+        await loadData({ forceRefresh: true, preserveScroll: true });
     } catch (error) {
         alert('Error removing researcher: ' + error.message);
     }
 }
 
 async function setLSR(handle) {
-    researchersConfig.lsr = handle;
-    
     try {
-        await saveResearchers();
+        const nextConfig = cloneResearchersConfig(researchersConfig);
+        nextConfig.lsr = handle;
+        await persistResearchersConfig(nextConfig);
         renderResearchersList();
-        loadData(); // Refresh main data
+        await loadData({ forceRefresh: true, preserveScroll: true });
     } catch (error) {
         alert('Error setting LSR: ' + error.message);
     }
 }
 
 async function saveResearchers() {
-    if (allPRs.length === 0) {
-        throw new Error('No active PR');
-    }
-    
-    const activePR = allPRs[activePRIndex];
-    const response = await fetch('/api/researchers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            owner: activePR.owner,
-            repo: activePR.repo,
-            prNumber: activePR.pullRequestNumber,
-            researchers: researchersConfig.researchers,
-            lsr: researchersConfig.lsr,
-            prIndex: activePRIndex // Include prIndex for duplicate PR support
-        })
-    });
-    
-    const result = await response.json();
-    if (!result.success) {
-        throw new Error('Failed to save researchers');
-    }
+    return persistResearchersConfig(cloneResearchersConfig(researchersConfig));
 }
 
 // Undupe an auto-detected duplicate

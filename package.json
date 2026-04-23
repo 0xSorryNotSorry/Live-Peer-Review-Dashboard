@@ -4,7 +4,8 @@
     "scripts": {
         "start": "node main.js",
         "server": "node server.js",
-        "pdf": "node main.js"
+        "pdf": "node main.js",
+        "test:researchers": "node --test researchersConfig.test.js"
     },
     "dependencies": {
         "@octokit/graphql": "^7.0.2",

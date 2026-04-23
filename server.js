@@ -5,6 +5,7 @@ import fs from "fs/promises";
 import { getPRReviewCommentsWithReactions, generatePDF } from "./dataFetcher.js";
 import { Octokit } from "@octokit/rest";
 import dotenv from "dotenv";
+import { normalizeResearchersConfig } from "./researchersConfig.js";
 
 dotenv.config();
 
@@ -78,6 +79,15 @@ function invalidateCache(owner, repo, prNumber, prIndex = null) {
     console.log(`🗑️ Cache invalidated for ${key}`);
 }
 
+function parseOptionalPrIndex(value) {
+    if (value === undefined || value === null || value === "") {
+        return null;
+    }
+
+    const parsed = Number.parseInt(value, 10);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
 // Data directory for configs and app-generated files (defaults to working directory)
 const DATA_DIR = process.env.APP_DATA_DIR
     ? resolve(process.env.APP_DATA_DIR)
@@ -142,14 +152,9 @@ async function loadResearchers(owner, repo, prNumber, prIndex = null) {
         }
         
         const data = await fs.readFile(dataPath(filename), "utf8");
-        return JSON.parse(data);
+        return normalizeResearchersConfig(JSON.parse(data));
     } catch (error) {
-        // Create default if doesn't exist
-        const defaultResearchers = {
-            researchers: [],
-            lsr: null,
-        };
-        return defaultResearchers;
+        return normalizeResearchersConfig(null);
     }
 }
 
@@ -175,6 +180,7 @@ async function saveAssignments(assignments) {
 // Save researchers config for a specific PR
 async function saveResearchers(owner, repo, prNumber, researchers, prIndex = null) {
     await ensureDataDir();
+    const normalizedConfig = normalizeResearchersConfig(researchers);
     // For duplicate PRs, use index-specific config file
     let filename;
     if (prIndex !== null) {
@@ -182,7 +188,8 @@ async function saveResearchers(owner, repo, prNumber, researchers, prIndex = nul
     } else {
         filename = `researchers-${owner}-${repo}-${prNumber}.json`;
     }
-    await fs.writeFile(dataPath(filename), JSON.stringify(researchers, null, 2));
+    await fs.writeFile(dataPath(filename), JSON.stringify(normalizedConfig, null, 2));
+    return normalizedConfig;
 }
 
 // API: Get authenticated user (token owner)
@@ -345,7 +352,7 @@ app.get("/api/researchers", async (req, res) => {
         if (!owner || !repo || !prNumber) {
             return res.status(400).json({ error: "Missing PR info" });
         }
-        const index = prIndex !== undefined ? parseInt(prIndex) : null;
+        const index = parseOptionalPrIndex(prIndex);
         const researchers = await loadResearchers(owner, repo, parseInt(prNumber), index);
         res.json(researchers);
     } catch (error) {
@@ -360,9 +367,22 @@ app.post("/api/researchers", async (req, res) => {
         if (!owner || !repo || !prNumber) {
             return res.status(400).json({ error: "Missing PR info" });
         }
-        const index = prIndex !== undefined ? parseInt(prIndex) : null;
-        await saveResearchers(owner, repo, parseInt(prNumber), { researchers, lsr }, index);
-        res.json({ success: true });
+        if (!Array.isArray(researchers)) {
+            return res.status(400).json({ error: "Researchers must be an array" });
+        }
+
+        const index = parseOptionalPrIndex(prIndex);
+        const normalizedConfig = await saveResearchers(
+            owner,
+            repo,
+            parseInt(prNumber),
+            { researchers, lsr },
+            index,
+        );
+
+        invalidateCache(owner, repo, parseInt(prNumber), index);
+
+        res.json({ success: true, researchersConfig: normalizedConfig });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
