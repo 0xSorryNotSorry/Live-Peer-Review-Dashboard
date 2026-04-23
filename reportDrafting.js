@@ -374,8 +374,7 @@ export function formatWholeReportMarkdown({ repository, findings, skippedItems =
 export async function writeDraftArtifacts({ outputDir, fileStem, markdown, result, prompt }) {
     await fs.mkdir(outputDir, { recursive: true });
 
-    const markdownPath = join(outputDir, `${fileStem}.md`);
-    const metadataPath = join(outputDir, `${fileStem}.json`);
+    const { markdownPath, metadataPath } = getDraftArtifactPaths(outputDir, fileStem);
 
     await Promise.all([
         fs.writeFile(markdownPath, markdown, "utf8"),
@@ -399,18 +398,32 @@ export async function writeDraftArtifacts({ outputDir, fileStem, markdown, resul
     };
 }
 
+export function getDraftArtifactPaths(outputDir, fileStem) {
+    return {
+        markdownPath: join(outputDir, `${fileStem}.md`),
+        metadataPath: join(outputDir, `${fileStem}.json`),
+    };
+}
+
 export function buildDraftFileStem({ repository, source, startedAt }) {
-    const repoSlug = slugify(`${repository.owner}-${repository.repo}-pr${repository.pullRequestNumber}`);
-    const sourceSlug =
-        source.sourceType === "group"
-            ? slugify(source.sourceId)
-            : slugify(basename(source.sourceId));
+    const prefix = buildDraftFileStemPrefix({ repository, source });
     const timestamp = new Date(startedAt).toISOString().replace(/[:.]/g, "-");
-    return `${repoSlug}-${source.sourceType}-${sourceSlug}-${timestamp}`;
+    return `${prefix}-${timestamp}`;
 }
 
 export function getDraftOutputDir(baseDir) {
     return join(baseDir, "report-drafts");
+}
+
+export function buildDraftFileStemPrefix({ repository, source }) {
+    const repoSlug = slugify(`${repository.owner}-${repository.repo}-pr${repository.pullRequestNumber}`);
+    const sourceSlug =
+        source.sourceType === "group"
+            ? slugify(source.sourceId)
+            : source.sourceType === "full-report"
+            ? slugify(source.sourceId)
+            : slugify(basename(source.sourceId));
+    return `${repoSlug}-${source.sourceType}-${sourceSlug}`;
 }
 
 export async function writeSchemaTempFile(schema) {

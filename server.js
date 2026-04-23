@@ -7,6 +7,8 @@ import { Octokit } from "@octokit/rest";
 import dotenv from "dotenv";
 import { normalizeResearchersConfig } from "./researchersConfig.js";
 import {
+    buildDraftFileStemPrefix,
+    getDraftArtifactPaths,
     buildConsensusReportPlan,
     buildDraftFileStem,
     buildGoogleDocTitle,
@@ -321,7 +323,30 @@ async function getReportDraftState() {
         reportDraftState.jobsBySourceKey = {};
     }
 
+    await reconcileStaleReportDraftJobs();
+
     return reportDraftState;
+}
+
+async function reconcileStaleReportDraftJobs() {
+    if (!reportDraftState?.jobsBySourceKey) {
+        return;
+    }
+
+    let changed = false;
+    for (const [sourceKey, job] of Object.entries(reportDraftState.jobsBySourceKey)) {
+        if (job?.status === "drafting" && !runningReportDraftJobs.has(sourceKey)) {
+            job.status = "failed";
+            job.finishedAt = job.finishedAt || new Date().toISOString();
+            job.error = job.error || "Draft job was interrupted before completion.";
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        await ensureDataDir();
+        await fs.writeFile(dataPath(REPORT_DRAFT_JOBS_FILE), JSON.stringify(reportDraftState, null, 2));
+    }
 }
 
 async function persistReportDraftState() {
@@ -359,11 +384,16 @@ function sanitizeReportDraftJob(job) {
         docUrl: job.docUrl || null,
         markdownPath: job.markdownPath || null,
         markdownUrl: job.markdownPath ? `/api/report-drafts/${job.id}/markdown` : null,
+        metadataPath: job.metadataPath || null,
+        metadataUrl: job.metadataPath ? `/api/report-drafts/${job.id}/metadata` : null,
         mode: job.mode || null,
         confidence: job.confidence ?? null,
         itemCount: job.itemCount ?? null,
         completedCount: job.completedCount ?? null,
         skippedCount: job.skippedCount ?? null,
+        currentItemLabel: job.currentItemLabel ?? null,
+        currentItemIndex: job.currentItemIndex ?? null,
+        canStop: job.status === "drafting",
     };
 }
 
@@ -377,6 +407,11 @@ async function upsertReportDraftJob(job) {
 async function findReportDraftJobById(jobId) {
     const state = await getReportDraftState();
     return Object.values(state.jobsBySourceKey).find((job) => job.id === jobId) || null;
+}
+
+async function getReportDraftJobBySourceKey(sourceKey) {
+    const state = await getReportDraftState();
+    return state.jobsBySourceKey[sourceKey] || null;
 }
 
 async function listReportDraftJobs(prIndex) {
@@ -396,6 +431,234 @@ function getProviderModel(repository, provider) {
     }
 
     return provider === "claude" ? "sonnet" : "gpt-5.4";
+}
+
+async function loadDraftMetadata(metadataPath) {
+    const raw = await fs.readFile(metadataPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed?.result) {
+        parsed.result = normalizeDraftResultShape(parsed.result);
+    }
+    return parsed;
+}
+
+function normalizeDraftResultShape(result) {
+    if (!result || typeof result !== "object") {
+        return result;
+    }
+
+    if (result.reportDraft) {
+        return result;
+    }
+
+    if (result.oakDraft) {
+        return {
+            ...result,
+            reportDraft: result.oakDraft,
+        };
+    }
+
+    return result;
+}
+
+async function fileExists(path) {
+    try {
+        await fs.access(path);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function createReadySourceJob({
+    existingJob,
+    prIndex,
+    sourceType,
+    sourceId,
+    provider,
+    model,
+    markdownPath,
+    metadataPath,
+    result,
+    startedAt,
+    finishedAt,
+}) {
+    return {
+        ...(existingJob || {}),
+        id: existingJob?.id || buildReportDraftJobId(sourceType, sourceId),
+        prIndex,
+        sourceType,
+        sourceId,
+        sourceKey: buildReportDraftSourceKey(prIndex, sourceType, sourceId),
+        status: "ready",
+        provider,
+        model,
+        startedAt: existingJob?.startedAt || startedAt,
+        finishedAt: finishedAt || new Date().toISOString(),
+        error: null,
+        markdownPath,
+        metadataPath,
+        docUrl: existingJob?.docUrl || null,
+        mode: result?.mode || null,
+        confidence: result?.confidence ?? null,
+        itemCount: 1,
+        completedCount: 1,
+        skippedCount: result?.mode === "split_needed" ? 1 : 0,
+        currentItemLabel: null,
+        currentItemIndex: null,
+    };
+}
+
+async function loadSavedSourceCheckpoint({
+    prIndex,
+    reviewData,
+    repository,
+    sourceType,
+    sourceId,
+    provider,
+    model,
+    priorFullReportStartedAt,
+}) {
+    const sourceKey = buildReportDraftSourceKey(prIndex, sourceType, sourceId);
+    const existingJob = await getReportDraftJobBySourceKey(sourceKey);
+    const canReuseExistingJob =
+        existingJob?.status === "ready" &&
+        existingJob.provider === provider &&
+        existingJob.model === model &&
+        existingJob.markdownPath &&
+        existingJob.metadataPath &&
+        (await fileExists(existingJob.markdownPath)) &&
+        (await fileExists(existingJob.metadataPath));
+
+    if (canReuseExistingJob) {
+        const metadata = await loadDraftMetadata(existingJob.metadataPath);
+        return {
+            result: metadata.result,
+            markdownPath: existingJob.markdownPath,
+            metadataPath: existingJob.metadataPath,
+            restoredJob: existingJob,
+        };
+    }
+
+    if (!priorFullReportStartedAt) {
+        return loadLatestSavedSourceArtifact({
+            prIndex,
+            reviewData,
+            repository,
+            sourceType,
+            sourceId,
+            provider,
+            model,
+            existingJob,
+        });
+    }
+
+    const source = buildDraftSourcePayload(reviewData, sourceType, sourceId);
+    const fileStem = buildDraftFileStem({
+        repository,
+        source,
+        startedAt: priorFullReportStartedAt,
+    });
+    const artifactPaths = getDraftArtifactPaths(getDraftOutputDir(DATA_DIR), fileStem);
+    const canReusePriorArtifacts =
+        (await fileExists(artifactPaths.markdownPath)) &&
+        (await fileExists(artifactPaths.metadataPath));
+
+    if (!canReusePriorArtifacts) {
+        return loadLatestSavedSourceArtifact({
+            prIndex,
+            reviewData,
+            repository,
+            sourceType,
+            sourceId,
+            provider,
+            model,
+            existingJob,
+        });
+    }
+
+    const metadata = await loadDraftMetadata(artifactPaths.metadataPath);
+    const restoredJob = createReadySourceJob({
+        existingJob,
+        prIndex,
+        sourceType,
+        sourceId,
+        provider,
+        model,
+        markdownPath: artifactPaths.markdownPath,
+        metadataPath: artifactPaths.metadataPath,
+        result: metadata.result,
+        startedAt: priorFullReportStartedAt,
+        finishedAt: new Date().toISOString(),
+    });
+    await upsertReportDraftJob(restoredJob);
+
+    return {
+        result: metadata.result,
+        markdownPath: artifactPaths.markdownPath,
+        metadataPath: artifactPaths.metadataPath,
+        restoredJob,
+    };
+}
+
+async function loadLatestSavedSourceArtifact({
+    prIndex,
+    reviewData,
+    repository,
+    sourceType,
+    sourceId,
+    provider,
+    model,
+    existingJob,
+}) {
+    const outputDir = getDraftOutputDir(DATA_DIR);
+    const source = buildDraftSourcePayload(reviewData, sourceType, sourceId);
+    const prefix = buildDraftFileStemPrefix({ repository, source });
+
+    let files;
+    try {
+        files = await fs.readdir(outputDir);
+    } catch (_) {
+        return null;
+    }
+
+    const candidateFiles = files
+        .filter((name) => name.startsWith(`${prefix}-`) && name.endsWith(".json"))
+        .sort()
+        .reverse();
+
+    for (const fileName of candidateFiles) {
+        const metadataPath = join(outputDir, fileName);
+        const markdownPath = metadataPath.replace(/\.json$/, ".md");
+        if (!(await fileExists(markdownPath))) {
+            continue;
+        }
+
+        const metadata = await loadDraftMetadata(metadataPath);
+        const restoredJob = createReadySourceJob({
+            existingJob,
+            prIndex,
+            sourceType,
+            sourceId,
+            provider,
+            model,
+            markdownPath,
+            metadataPath,
+            result: metadata.result,
+            startedAt: existingJob?.startedAt || new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+        });
+        await upsertReportDraftJob(restoredJob);
+
+        return {
+            result: metadata.result,
+            markdownPath,
+            metadataPath,
+            restoredJob,
+        };
+    }
+
+    return null;
 }
 
 async function generateDraftResultForSource({
@@ -463,9 +726,11 @@ async function startReportDraftJob(prIndex, sourceType, sourceId, options = {}) 
     const provider = draftConfig.provider;
     const model = getProviderModel(repository, provider);
     const startedAt = new Date().toISOString();
+    const priorJob = await getReportDraftJobBySourceKey(sourceKey);
     const selectedSources = Array.isArray(options.selectedSources)
         ? options.selectedSources.filter((entry) => entry?.sourceType && entry?.sourceId)
         : [];
+    const abortController = new AbortController();
     const job = {
         id: buildReportDraftJobId(sourceType, sourceId),
         prIndex,
@@ -486,8 +751,11 @@ async function startReportDraftJob(prIndex, sourceType, sourceId, options = {}) 
         itemCount: sourceType === "full-report" ? selectedSources.length : 1,
         completedCount: 0,
         skippedCount: 0,
+        currentItemLabel: null,
+        currentItemIndex: null,
     };
 
+    runningReportDraftJobs.set(sourceKey, { job, promise: null, abortController, activeChildPid: null });
     await upsertReportDraftJob(job);
 
     const promise = (async () => {
@@ -500,27 +768,76 @@ async function startReportDraftJob(prIndex, sourceType, sourceId, options = {}) 
                 const findings = [];
                 const skippedItems = [];
                 for (const selectedSource of selectedSources) {
-                    const draftResult = await generateDraftResultForSource({
+                    job.currentItemIndex = job.completedCount + 1;
+                    job.currentItemLabel = selectedSource.issueNumber || selectedSource.sourceId;
+                    await upsertReportDraftJob(job);
+
+                    const savedCheckpoint = await loadSavedSourceCheckpoint({
+                        prIndex,
                         reviewData,
                         repository,
-                        draftConfig,
-                        repoPath,
+                        sourceType: selectedSource.sourceType,
+                        sourceId: selectedSource.sourceId,
+                        provider,
+                        model,
+                        priorFullReportStartedAt: priorJob?.startedAt || null,
+                    });
+                    let reportResult;
+
+                    if (savedCheckpoint) {
+                        reportResult = savedCheckpoint.result;
+                    } else {
+                        const draftResult = await generateDraftResultForSource({
+                            reviewData,
+                            repository,
+                            draftConfig,
+                            repoPath,
                         sourceType: selectedSource.sourceType,
                         sourceId: selectedSource.sourceId,
                         provider,
                         model,
                         startedAt,
+                        signal: abortController.signal,
+                        onSpawn: (child) => {
+                            const activeRun = runningReportDraftJobs.get(sourceKey);
+                            if (activeRun) {
+                                activeRun.activeChildPid = child.pid;
+                            }
+                        },
                     });
+                        reportResult = draftResult.providerResult.structured;
 
-                    if (draftResult.providerResult.structured.mode === "split_needed") {
+                        const childJob = createReadySourceJob({
+                            existingJob: await getReportDraftJobBySourceKey(
+                                buildReportDraftSourceKey(
+                                    prIndex,
+                                    selectedSource.sourceType,
+                                    selectedSource.sourceId,
+                                ),
+                            ),
+                            prIndex,
+                            sourceType: selectedSource.sourceType,
+                            sourceId: selectedSource.sourceId,
+                            provider,
+                            model,
+                            markdownPath: draftResult.artifacts.markdownPath,
+                            metadataPath: draftResult.artifacts.metadataPath,
+                            result: normalizeDraftResultShape(reportResult),
+                            startedAt,
+                            finishedAt: new Date().toISOString(),
+                        });
+                        await upsertReportDraftJob(childJob);
+                    }
+
+                    if (reportResult.mode === "split_needed") {
                         skippedItems.push({
                             label: selectedSource.issueNumber || selectedSource.sourceId,
                             reason:
-                                draftResult.providerResult.structured.splitReason ||
+                                reportResult.splitReason ||
                                 "The selected finding needs manual split review.",
                         });
                     } else {
-                        findings.push(draftResult.providerResult.structured);
+                        findings.push(reportResult);
                     }
 
                     job.completedCount += 1;
@@ -568,8 +885,14 @@ async function startReportDraftJob(prIndex, sourceType, sourceId, options = {}) 
                     docUrl: googleDoc?.url || null,
                     mode: "full-report",
                     confidence: null,
+                    currentItemLabel: null,
+                    currentItemIndex: null,
                 });
             } else {
+                job.currentItemIndex = 1;
+                job.currentItemLabel = sourceId;
+                await upsertReportDraftJob(job);
+
                 const draftResult = await generateDraftResultForSource({
                     reviewData,
                     repository,
@@ -580,6 +903,13 @@ async function startReportDraftJob(prIndex, sourceType, sourceId, options = {}) 
                     provider,
                     model,
                     startedAt,
+                    signal: abortController.signal,
+                    onSpawn: (child) => {
+                        const activeRun = runningReportDraftJobs.get(sourceKey);
+                        if (activeRun) {
+                            activeRun.activeChildPid = child.pid;
+                        }
+                    },
                 });
                 const googleDoc = await createGoogleDocDraft({
                     title: buildGoogleDocTitle({ repository, source: draftResult.source }),
@@ -595,26 +925,54 @@ async function startReportDraftJob(prIndex, sourceType, sourceId, options = {}) 
                     mode: draftResult.providerResult.structured.mode,
                     confidence: draftResult.providerResult.structured.confidence,
                     completedCount: 1,
+                    currentItemLabel: null,
+                    currentItemIndex: null,
                 });
             }
             await upsertReportDraftJob(job);
         } catch (error) {
-            Object.assign(job, {
-                status: "failed",
-                finishedAt: new Date().toISOString(),
-                error: error.message,
-            });
+            if (error?.name === "AbortError") {
+                Object.assign(job, {
+                    status: "paused",
+                    finishedAt: new Date().toISOString(),
+                    error: null,
+                    currentItemLabel: job.currentItemLabel || null,
+                });
+            } else {
+                Object.assign(job, {
+                    status: "failed",
+                    finishedAt: new Date().toISOString(),
+                    error: error.message,
+                    currentItemLabel: job.currentItemLabel || null,
+                });
+            }
             await upsertReportDraftJob(job);
         } finally {
             runningReportDraftJobs.delete(sourceKey);
         }
     })();
 
-    runningReportDraftJobs.set(sourceKey, { job, promise });
+    runningReportDraftJobs.set(sourceKey, { job, promise, abortController, activeChildPid: null });
     promise.catch(() => {
         // failure is persisted in the job state above
     });
 
+    return job;
+}
+
+async function stopReportDraftJob(jobId) {
+    const state = await getReportDraftState();
+    const job = Object.values(state.jobsBySourceKey).find((entry) => entry.id === jobId) || null;
+    if (!job) {
+        throw new Error("Draft job not found");
+    }
+
+    const activeRun = runningReportDraftJobs.get(job.sourceKey);
+    if (!activeRun?.abortController) {
+        throw new Error("Draft job is not currently running");
+    }
+
+    activeRun.abortController.abort();
     return job;
 }
 
@@ -731,6 +1089,21 @@ app.get("/api/report-drafts/:jobId", async (req, res) => {
     }
 });
 
+app.post("/api/report-drafts/:jobId/stop", async (req, res) => {
+    try {
+        await stopReportDraftJob(req.params.jobId);
+        const job = await findReportDraftJobById(req.params.jobId);
+        res.json({
+            success: true,
+            job: sanitizeReportDraftJob(job),
+            googleDocsEnabled: isGoogleDocsEnabled(),
+        });
+    } catch (error) {
+        console.error("Error stopping report draft job:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 app.get("/api/report-drafts/:jobId/markdown", async (req, res) => {
     try {
         const job = await findReportDraftJobById(req.params.jobId);
@@ -743,6 +1116,22 @@ app.get("/api/report-drafts/:jobId/markdown", async (req, res) => {
         res.send(markdown);
     } catch (error) {
         console.error("Error serving report draft markdown:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get("/api/report-drafts/:jobId/metadata", async (req, res) => {
+    try {
+        const job = await findReportDraftJobById(req.params.jobId);
+        if (!job || !job.metadataPath) {
+            return res.status(404).json({ error: "Draft metadata not found" });
+        }
+
+        const metadata = await fs.readFile(job.metadataPath, "utf8");
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.send(metadata);
+    } catch (error) {
+        console.error("Error serving report draft metadata:", error);
         res.status(500).json({ error: error.message });
     }
 });

@@ -1587,6 +1587,16 @@ body.dark-mode .refresh-hint {
     white-space: nowrap;
 }
 
+.btn-stop-draft {
+    white-space: nowrap;
+    background: #dc3545;
+    color: white;
+}
+
+.btn-stop-draft:hover {
+    background: #b02a37;
+}
+
 .draft-status-badge {
     display: inline-flex;
     align-items: center;

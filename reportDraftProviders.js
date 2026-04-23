@@ -12,15 +12,17 @@ export async function runDraftWithProvider({
     repoPath,
     prompt,
     model,
+    signal,
+    onSpawn,
 }) {
     if (provider === "claude") {
-        return runClaudeDraft({ repoPath, prompt, model });
+        return runClaudeDraft({ repoPath, prompt, model, signal, onSpawn });
     }
 
-    return runCodexDraft({ repoPath, prompt, model });
+    return runCodexDraft({ repoPath, prompt, model, signal, onSpawn });
 }
 
-async function runCodexDraft({ repoPath, prompt, model }) {
+async function runCodexDraft({ repoPath, prompt, model, signal, onSpawn }) {
     const schemaPath = await writeSchemaTempFile(getDraftOutputSchema());
     const outputPath = await writeSchemaTempFile({});
 
@@ -45,7 +47,11 @@ async function runCodexDraft({ repoPath, prompt, model }) {
     }
 
     try {
-        const { stdout, stderr } = await spawnWithInput("codex", args, prompt, { cwd: repoPath });
+        const { stdout, stderr } = await spawnWithInput("codex", args, prompt, {
+            cwd: repoPath,
+            signal,
+            onSpawn,
+        });
         const outputText = await fs.readFile(outputPath, "utf8");
         return {
             structured: JSON.parse(outputText),
@@ -57,7 +63,7 @@ async function runCodexDraft({ repoPath, prompt, model }) {
     }
 }
 
-async function runClaudeDraft({ repoPath, prompt, model }) {
+async function runClaudeDraft({ repoPath, prompt, model, signal, onSpawn }) {
     const schema = JSON.stringify(getDraftOutputSchema());
     const args = [
         "-p",
@@ -75,7 +81,11 @@ async function runClaudeDraft({ repoPath, prompt, model }) {
         args.push("--model", "sonnet");
     }
 
-    const { stdout, stderr } = await spawnWithInput("claude", args, prompt, { cwd: repoPath });
+    const { stdout, stderr } = await spawnWithInput("claude", args, prompt, {
+        cwd: repoPath,
+        signal,
+        onSpawn,
+    });
     const parsed = JSON.parse(stdout);
     return {
         structured: parsed.structured_output,
@@ -91,9 +101,33 @@ async function spawnWithInput(command, args, input, options = {}) {
             env: process.env,
             stdio: ["pipe", "pipe", "pipe"],
         });
+        let settled = false;
 
         let stdout = "";
         let stderr = "";
+
+        if (typeof options.onSpawn === "function") {
+            options.onSpawn(child);
+        }
+
+        const abortHandler = () => {
+            if (settled) {
+                return;
+            }
+            child.kill("SIGTERM");
+            const error = new Error("Draft job stopped by user.");
+            error.name = "AbortError";
+            settled = true;
+            reject(error);
+        };
+
+        if (options.signal) {
+            if (options.signal.aborted) {
+                abortHandler();
+                return;
+            }
+            options.signal.addEventListener("abort", abortHandler, { once: true });
+        }
 
         child.stdout.on("data", (chunk) => {
             stdout += chunk.toString();
@@ -104,10 +138,21 @@ async function spawnWithInput(command, args, input, options = {}) {
         });
 
         child.on("error", (error) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
             reject(error);
         });
 
         child.on("close", (code) => {
+            if (options.signal) {
+                options.signal.removeEventListener("abort", abortHandler);
+            }
+            if (settled) {
+                return;
+            }
+            settled = true;
             if (code !== 0) {
                 reject(
                     new Error(

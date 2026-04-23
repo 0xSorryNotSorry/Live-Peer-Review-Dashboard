@@ -199,6 +199,13 @@ function buildDraftActionHtml(sourceType, sourceId, options = {}) {
             >
                 ${label}
             </button>
+            <button
+                class="btn btn-secondary btn-stop-draft${buttonClass}"
+                data-source-key="${escapeAttribute(sourceKey)}"
+                style="display: none;"
+            >
+                Stop
+            </button>
             <span class="draft-status-badge idle" data-draft-status-for="${escapeAttribute(sourceKey)}">Idle</span>
             <span class="draft-progress-text" data-draft-progress-text-for="${escapeAttribute(sourceKey)}" style="display: none;"></span>
             <a
@@ -222,6 +229,9 @@ function getDraftActionLabel(sourceType, state = 'default') {
     const isFullReport = sourceType === 'full-report';
     if (state === 'drafting') {
         return isFullReport ? 'Generating...' : 'Drafting...';
+    }
+    if (state === 'paused') {
+        return isFullReport ? 'Resume Report' : 'Resume Draft';
     }
     if (state === 'ready') {
         return isFullReport ? 'Re-generate Report' : 'Re-draft Report';
@@ -299,12 +309,17 @@ function updateReportDraftActionElements() {
         const buttonEls = document.querySelectorAll(
             `[data-draft-source-key="${CSS.escape(sourceKey)}"] .btn-draft-report`,
         );
+        const stopButtonEls = document.querySelectorAll(
+            `[data-draft-source-key="${CSS.escape(sourceKey)}"] .btn-stop-draft`,
+        );
         const sourceType = buttonEls[0]?.dataset.sourceType || 'single';
         const job = reportDraftJobsBySourceKey[sourceKey];
         const isMultiItemJob = typeof job?.itemCount === 'number' && job.itemCount > 1;
         const processedCount = Number.isFinite(job?.completedCount) ? job.completedCount : 0;
         const totalCount = Number.isFinite(job?.itemCount) ? job.itemCount : 0;
         const skippedCount = Number.isFinite(job?.skippedCount) ? job.skippedCount : 0;
+        const currentItemLabel = job?.currentItemLabel || null;
+        const currentItemIndex = Number.isFinite(job?.currentItemIndex) ? job.currentItemIndex : null;
         const progressPercent = totalCount > 0
             ? Math.max(0, Math.min(100, Math.round((processedCount / totalCount) * 100)))
             : 0;
@@ -343,6 +358,10 @@ function updateReportDraftActionElements() {
                 buttonEl.disabled = false;
                 buttonEl.textContent = getDraftActionLabel(sourceType);
             });
+            stopButtonEls.forEach((buttonEl) => {
+                buttonEl.style.display = 'none';
+                buttonEl.disabled = false;
+            });
             linkEls.forEach((linkEl) => {
                 linkEl.style.display = 'none';
                 linkEl.href = '#';
@@ -358,13 +377,42 @@ function updateReportDraftActionElements() {
                 buttonEl.disabled = true;
                 buttonEl.textContent = getDraftActionLabel(sourceType, 'drafting');
             });
+            stopButtonEls.forEach((buttonEl) => {
+                buttonEl.style.display = 'inline-flex';
+                buttonEl.disabled = false;
+            });
             linkEls.forEach((linkEl) => {
                 linkEl.style.display = 'none';
                 linkEl.href = '#';
             });
             if (isMultiItemJob) {
                 showProgress(
-                    `${processedCount}/${totalCount} processed · ${progressPercent}%${skippedCount ? ` · ${skippedCount} skipped` : ''}`,
+                    `${processedCount}/${totalCount} processed · ${progressPercent}%${skippedCount ? ` · ${skippedCount} skipped` : ''}${currentItemLabel ? ` · now: ${currentItemIndex || '?'} ${currentItemLabel}` : ''}`,
+                );
+            } else {
+                hideProgress();
+            }
+            return;
+        }
+
+        if (job.status === 'paused') {
+            statusEl.classList.add('failed');
+            statusEl.textContent = 'Paused';
+            buttonEls.forEach((buttonEl) => {
+                buttonEl.disabled = false;
+                buttonEl.textContent = getDraftActionLabel(sourceType, 'paused');
+            });
+            stopButtonEls.forEach((buttonEl) => {
+                buttonEl.style.display = 'none';
+                buttonEl.disabled = false;
+            });
+            linkEls.forEach((linkEl) => {
+                linkEl.style.display = 'none';
+                linkEl.href = '#';
+            });
+            if (isMultiItemJob) {
+                showProgress(
+                    `${processedCount}/${totalCount} processed · ${progressPercent}%${skippedCount ? ` · ${skippedCount} skipped` : ''}${currentItemLabel ? ` · paused at: ${currentItemIndex || '?'} ${currentItemLabel}` : ''}`,
                 );
             } else {
                 hideProgress();
@@ -380,6 +428,10 @@ function updateReportDraftActionElements() {
             buttonEls.forEach((buttonEl) => {
                 buttonEl.disabled = false;
                 buttonEl.textContent = getDraftActionLabel(sourceType, 'ready');
+            });
+            stopButtonEls.forEach((buttonEl) => {
+                buttonEl.style.display = 'none';
+                buttonEl.disabled = false;
             });
             linkEls.forEach((linkEl) => {
                 linkEl.style.display = 'inline-flex';
@@ -403,13 +455,17 @@ function updateReportDraftActionElements() {
             buttonEl.disabled = false;
             buttonEl.textContent = getDraftActionLabel(sourceType, 'failed');
         });
+        stopButtonEls.forEach((buttonEl) => {
+            buttonEl.style.display = 'none';
+            buttonEl.disabled = false;
+        });
         linkEls.forEach((linkEl) => {
             linkEl.style.display = 'none';
             linkEl.href = '#';
         });
         if (isMultiItemJob) {
             showProgress(
-                `${processedCount}/${totalCount} processed · ${progressPercent}%${skippedCount ? ` · ${skippedCount} skipped` : ''}`,
+                `${processedCount}/${totalCount} processed · ${progressPercent}%${skippedCount ? ` · ${skippedCount} skipped` : ''}${currentItemLabel ? ` · last: ${currentItemIndex || '?'} ${currentItemLabel}` : ''}`,
             );
         } else {
             hideProgress();
@@ -469,6 +525,34 @@ async function startReportDraft(sourceType, sourceId) {
         syncReportDraftPolling();
     } catch (error) {
         alert(`Error starting draft: ${error.message}`);
+    }
+}
+
+async function stopReportDraft(sourceKey) {
+    const job = reportDraftJobsBySourceKey[sourceKey];
+    if (!job?.id) {
+        alert('Draft job is not available to stop.');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/report-drafts/${encodeURIComponent(job.id)}/stop`, {
+            method: 'POST',
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to stop draft job');
+        }
+
+        googleDocsEnabled = !!data.googleDocsEnabled;
+        if (data.job?.sourceKey) {
+            reportDraftJobsBySourceKey[data.job.sourceKey] = data.job;
+        }
+        renderReportSettingsSection();
+        updateReportDraftActionElements();
+        syncReportDraftPolling();
+    } catch (error) {
+        alert(`Error stopping draft: ${error.message}`);
     }
 }
 
@@ -2036,6 +2120,14 @@ function setupEventListeners() {
         const draftLink = event.target.closest('.draft-open-link');
         if (draftLink) {
             event.stopPropagation();
+            return;
+        }
+
+        const stopButton = event.target.closest('.btn-stop-draft');
+        if (stopButton) {
+            event.preventDefault();
+            event.stopPropagation();
+            stopReportDraft(stopButton.dataset.sourceKey);
             return;
         }
 
